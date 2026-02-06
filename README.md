@@ -4,6 +4,12 @@
 <p align="center">
  <img width="600" alt="VisionVaultGridLayout" src="https://github.com/user-attachments/assets/f128aed5-e062-4cb4-8b44-b069ea6a25ca" />
 </p>
+<p align="center">
+  <a href="https://github.com/VisionDepth/VisionVault/releases">
+    <img src="https://img.shields.io/github/downloads/VisionDepth/VisionVault/total?style=for-the-badge&logo=github&color=8A2BE2" alt="Total Downloads">
+  </a>
+</p>
+
 
 <p align="center">
 VisionVault is a sleek, lightweight <strong>offline movie library manager</strong> built with <strong>CustomTkinter + SQLite</strong>.<br>
@@ -18,6 +24,7 @@ Everything lives locally on your machine, with optional <strong>Wikipedia-powere
 <p align="center">
 Your personal movie vault, fully under your control.
 </p>
+
 
 ---
 
