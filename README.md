@@ -1,13 +1,22 @@
-# VisionVault (Offline Movie Inventory)
+# VisionVault (Offline Movie Inventory) 
 
-VisionVault is a sleek, lightweight **offline movie library manager** built with **CustomTkinter + SQLite**.  
+<p align="center">
+  <img width="450" alt="VisionVaultLogo" src="https://github.com/user-attachments/assets/4d2aeb39-014d-4134-b434-8dd16ca97089" />
+</p>
+
+<p align="center">
+VisionVault is a sleek, lightweight <strong>offline movie library manager</strong> built with <strong>CustomTkinter + SQLite</strong>.<br>
 Organize your entire collection, track watch history, browse beautiful poster grids, and launch your movies directly from one clean interface.
+</p>
 
-Designed to be fast, private, and distraction-free: **no accounts, no subscriptions, no cloud storage**.  
-Everything lives locally on your machine, with optional **Wikipedia-powered metadata and posters** to instantly enrich your library.
+<p align="center">
+Designed to be fast, private, and distraction-free: <strong>no accounts, no subscriptions, no cloud storage</strong>.<br>
+Everything lives locally on your machine, with optional <strong>Wikipedia-powered metadata and posters</strong> to instantly enrich your library.
+</p>
 
+<p align="center">
 Your personal movie vault, fully under your control.
-
+</p>
 
 ---
 
