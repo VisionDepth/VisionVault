@@ -1,4 +1,5 @@
-# VisionVault (Offline Movie Inventory) 
+<h1 align="center">VisionVault (Offline Movie Inventory) </h1>
+
 
 <p align="center">
   <img width="450" alt="VisionVaultLogo" src="https://github.com/user-attachments/assets/4d2aeb39-014d-4134-b434-8dd16ca97089" />
