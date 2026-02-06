@@ -2,7 +2,7 @@
 
 
 <p align="center">
-  <img width="450" alt="VisionVaultLogo" src="https://github.com/user-attachments/assets/4d2aeb39-014d-4134-b434-8dd16ca97089" />
+ <img width="600" alt="VisionVaultGridLayout" src="https://github.com/user-attachments/assets/f128aed5-e062-4cb4-8b44-b069ea6a25ca" />
 </p>
 
 <p align="center">
@@ -20,6 +20,7 @@ Your personal movie vault, fully under your control.
 </p>
 
 ---
+
 
 ## Features
 
@@ -45,14 +46,6 @@ Your personal movie vault, fully under your control.
   - Year ↑ / ↓
   - Watched ↑ / ↓
   - Recently added / Oldest added
-
-### Discover Tab (Wikipedia)
-- Search Wikipedia for a movie title
-- Click results to preview:
-  - Short overview
-  - Poster image (if available)
-  - Detected year (optional manual override)
-- Add the selected result to your Library in one click
 
 ### Stats Tab
 - Total movies
