@@ -1,117 +1,178 @@
-<h1 align="center">VisionVault (Offline Movie Inventory) </h1>
+<h1 align="center"> VisionVault — Offline Movie & TV Library Manager</h1>
 
 <p align="center">
- <img width="600" alt="VisionVaultGridLayout" src="https://github.com/user-attachments/assets/101c80de-3620-439b-aaf6-7b039bdf224c" />
+ <img width="700" alt="VisionVault Grid Layout" src="https://github.com/user-attachments/assets/101c80de-3620-439b-aaf6-7b039bdf224c" />
 </p>
+
 <p align="center">
   <a href="https://github.com/VisionDepth/VisionVault/releases">
     <img src="https://img.shields.io/github/downloads/VisionDepth/VisionVault/total?style=for-the-badge&logo=github&color=8A2BE2" alt="Total Downloads">
   </a>
 </p>
 
-
 <p align="center">
-VisionVault is a sleek, lightweight <strong>offline movie library manager</strong> built with <strong>CustomTkinter + SQLite</strong>.<br>
-Organize your entire collection, track watch history, browse beautiful poster grids, and launch your movies directly from one clean interface.
+<strong>VisionVault</strong> is a sleek, fast, fully <strong>offline movie & TV library manager</strong> built with <strong>CustomTkinter + SQLite</strong>.<br>
+Organize your collection, browse cinematic poster grids, track watch history, and launch media from one clean interface.
+</p>
+
+<p align="center"> No accounts • No cloud • No subscriptions • 100% local
 </p>
 
 <p align="center">
-Designed to be fast, private, and distraction-free: <strong>no accounts, no subscriptions, no cloud storage</strong>.<br>
-Everything lives locally on your machine, with optional <strong>Wikipedia-powered metadata and posters</strong> to instantly enrich your library.
+Optional <strong>Wikipedia-powered metadata & posters</strong> instantly enrich your library while keeping everything private.
 </p>
 
 <p align="center">
-Your personal movie vault, fully under your control.
+Your personal media vault — fully under your control.
 </p>
-
 
 ---
 
-
-## Features
+## Key Features
 
 ### Library Management
-- **Add movies by title** (manual entry)
-- **Add movies by file** (auto guesses title + year from filename)
-- Stores everything in a local **SQLite database** (`movies.db`)
-- **Edit details** anytime: title, year, genres, runtime, resolution, overview, poster, file path
-- **Delete** entries cleanly
-- **Mark as watched** (increments watch counter)
-- **Play movie file** from the app (and auto-increments watch count if the file successfully launches)
-
-### Views & Filters
-- **List View** and **Grid View** (poster tiles)
-- Search by title (live filtering)
-- Filter:
-  - All
-  - Unwatched
-  - Watched
-- Genre filter (auto-generated from your library)
-- Sorting:
-  - Title A→Z / Z→A
-  - Year ↑ / ↓
-  - Watched ↑ / ↓
-  - Recently added / Oldest added
-
-### Stats Tab
-- Total movies
-- Watched vs Unwatched
-- Total watch count
-- Top watched titles
-- Top genres
-- Recently added
-
-### Quality-of-Life
-- **Remembers your layout and preferences** using `movie_inventory_settings.json`:
-  - Window size/position
-  - Split panel sash position
-  - Theme (Dark/Light/System)
-  - Last selected movie
-  - List/Grid view mode
-- Posters are saved locally to `posters/`
+- Add movies by **title** or **file**
+- Automatic title & year detection from filenames
+- Local SQLite database storage (`movies.db`)
+- Edit everything:
+  - Title, year, genres
+  - Runtime & resolution
+  - Overview & poster
+  - File path
+- Delete entries cleanly
+- Track watch history
+- Launch movies directly from the app
 
 ---
 
-## How To Use
+### TV Show Support
+- Import entire TV show folders
+- Automatic show + episode structure
+- Episode naming format:
+  - `S01E01 - Episode Name`
+  - `S01E02 - Episode Name`
+- Manual editing of:
+  - Episode posters
+  - Descriptions
+  - Metadata
+- Progress tracking per show
+
+---
+
+### Grid View (Modern Media Wall)
+- Poster-focused tiled layout
+- Uniform sizing with clean alignment
+- Clamped and wrapped titles (no stretching)
+- Dense, directory-style browsing
+- Fully integrated with:
+  - Sorting
+  - Filters
+  - Show navigation
+  - Right-click context menu
+
+---
+
+### List View
+- Clean detailed list layout
+- Highlighted selection
+- Larger readable text spacing
+
+---
+
+### Search, Filter & Sort
+- Live search by title
+- Filter:
+  - All
+  - Watched
+  - Unwatched
+- Genre filter (auto-generated)
+- Sort by:
+  - Title A–Z / Z–A
+  - Year ↑ / ↓
+  - Watched ↑ / ↓
+  - Recently added / Oldest
+
+---
+
+### Stats Dashboard
+- Total movies, shows, and episodes
+- Watched vs unwatched breakdown
+- Total watch counts
+- Top watched movies and episodes
+- Most common genres
+- Recently added items
+
+---
+
+### Quality of Life
+VisionVault automatically remembers:
+- Window size and position
+- Split panel layout
+- Dark / Light / System theme
+- Last selected item
+- Grid/List view mode
+Saved locally in:
+
+movie_inventory_settings.json
+
+Posters are cached locally in:
+
+posters/
+
+---
+
+## Getting Started
 
 ### Add by Title
-1. Type a title into **Add by Title...**
+1. Type into **Add by Title...**
 2. Click **Add**
-3. In the Edit dialog you can optionally:
-   - Fetch metadata + poster from Wikipedia
-   - Set year/genres/overview manually
-4. Click **Save**
+3. Optionally fetch:
+   - Wikipedia metadata
+   - Poster art
+4. Save
+
+---
 
 ### Add by File
 1. Click **Add by File**
-2. Select your movie file (`.mkv`, `.mp4`, `.avi`, etc.)
-3. The app will:
-   - Guess title + year from filename
-   - Try to detect runtime + resolution via ffprobe (if available)
-4. Adjust anything in the Edit dialog and click **Save**
-
-### Watching & Playing
-- **Mark as Watched** increments the watch counter
-- **Play** opens the file using your OS default player  
-  If the player successfully launches, the app also increments watch count
-
-### Grid View
-Use **Grid View** to browse posters as tiles. Click a tile to load details.
+2. Select a video file
+3. VisionVault will:
+   - Guess title and year
+   - Detect runtime and resolution (via ffprobe if installed)
+4. Edit if needed and save
 
 ---
 
-## Notes / Behavior Details
-
-- Wikipedia features require internet access, but the app works fine without it.
-- Posters downloaded from Wikipedia are stored locally so Grid View stays fast.
-- If no movie poster is found when adding wiki info, just add a movie poster manually 
-- If you move movie files, update the **File path** field in **Edit Details**.
+### Watching and Playing
+- **Play** opens your movie in the default OS player  
+- If playback launches successfully, watch count increments automatically  
+- Or manually use **Mark as Watched**
 
 ---
 
-## Credits
+### Grid Browsing
+Switch to **Grid View** to browse your collection visually like a media wall.  
+Click any poster to view full details.
 
-Built with:
-- CustomTkinter
-- SQLite (built-in to Python)
-- Wikipedia Action API (for metadata & posters)
+---
+
+## Notes
+- Internet is only required for Wikipedia metadata fetching
+- The app works fully offline otherwise
+- All posters are stored locally for fast loading
+- If you move files, update the file path in **Edit Details**
+
+---
+
+## Built With
+- CustomTkinter  
+- SQLite  
+- Wikipedia Action API  
+
+---
+
+## Download
+Grab the standalone Windows `.exe` from:  
+https://github.com/VisionDepth/VisionVault/releases  
+
+No Python required.
