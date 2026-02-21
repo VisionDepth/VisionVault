@@ -1,8 +1,7 @@
 <h1 align="center">VisionVault (Offline Movie Inventory) </h1>
 
-
 <p align="center">
- <img width="600" alt="VisionVaultGridLayout" src="https://github.com/user-attachments/assets/f128aed5-e062-4cb4-8b44-b069ea6a25ca" />
+ <img width="600" alt="VisionVaultGridLayout" src="https://github.com/user-attachments/assets/101c80de-3620-439b-aaf6-7b039bdf224c" />
 </p>
 <p align="center">
   <a href="https://github.com/VisionDepth/VisionVault/releases">
