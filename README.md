@@ -1,7 +1,7 @@
 <h1 align="center"> VisionVault — Offline Movie & TV Library Manager</h1>
 
 <p align="center">
- <img width="700" alt="VisionVault Grid Layout" src="https://github.com/user-attachments/assets/c5686565-7fad-4ae0-9a44-283bda5657ab" />
+ <img width="700" alt="VisionVault Grid Layout" src="https://github.com/user-attachments/assets/b6a463c0-9a92-4724-8fed-a87531cc8128" />
 </p>
 
 <p align="center">
