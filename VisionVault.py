@@ -1,19 +1,43 @@
 import customtkinter as ctk
-import sqlite3, os, re, subprocess, sys, random, webbrowser
+import os, re, subprocess, sys, random, webbrowser
 from PIL import Image
-from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog
-import requests, urllib.parse
 import tkinter as tk
 from functools import partial
-import json
 from typing import Optional, Tuple
 import textwrap
 
-DB = "movies.db"
-POSTERS = Path("posters"); POSTERS.mkdir(exist_ok=True)
-SETTINGS_FILE = Path("movie_inventory_settings.json")  # <- NEW
+from vault_core import (
+    BASE_DIR,
+    POSTERS,
+    db,
+    load_settings,
+    save_settings,
+    resolve_existing_path,
+    init_db,
+    delete_movie,
+    guess_title_year_from_filename,
+    ffprobe_info,
+    list_movies,
+    list_show_episodes,
+    get_genres,
+    increment_watch,
+    upsert_movie,
+    get_stats,
+    ensure_show_row,
+    parse_encoded_episode_filename,
+    parse_episode_tag,
+    get_item,
+    get_show_progress,
+    play_item,
+    start_tv_mode,
+    stop_tv_mode,
+    open_tv_mode_in_browser,
+    get_tv_mode_url,
+    is_tv_mode_running,
+)
 
+    
 THEMES = {
     "Blue": {
         "accent": "#1f6aa5",
@@ -64,143 +88,6 @@ THEMES = {
         "danger_hover": "#991b1b",
     },
 }
-
-def load_settings():
-    if not SETTINGS_FILE.exists():
-        return {}
-    try:
-        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def save_settings(data: dict):
-    try:
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-    except Exception:
-        pass
-
-
-# -------------------- DB helpers --------------------
-def db():
-    con = sqlite3.connect(DB)
-    con.execute("PRAGMA foreign_keys=ON")
-    return con
-
-def init_db():
-    con = db()
-    con.execute("""
-    CREATE TABLE IF NOT EXISTS movies (
-        id INTEGER PRIMARY KEY,
-        tmdb_id INTEGER,             -- kept for future use, not used offline
-        title TEXT,
-        year INTEGER,
-        genres TEXT,
-        overview TEXT,
-        poster_path TEXT,
-        watch_count INTEGER DEFAULT 0,
-        added_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        file_path TEXT,
-        runtime_minutes INTEGER,
-        resolution TEXT
-    )""")
-    # safe schema upgrades if coming from older versions
-    for col_def in [
-        ("added_at", "TEXT DEFAULT CURRENT_TIMESTAMP"),
-        ("file_path", "TEXT"),
-        ("runtime_minutes", "INTEGER"),
-        ("resolution", "TEXT"),
-        ("tmdb_id", "INTEGER"),
-        # --- TV / hierarchy fields ---
-        ("media_type", "TEXT DEFAULT 'movie'"),   # movie | show | episode
-        ("show_id", "INTEGER"),                   # episodes point to a show row
-        ("season", "INTEGER"),
-        ("episode", "INTEGER"),
-    ]:
-        try:
-            con.execute(f"ALTER TABLE movies ADD COLUMN {col_def[0]} {col_def[1]}")
-        except sqlite3.OperationalError:
-            pass
-
-     # helpful indices (safe to try)
-    try:
-        con.execute("CREATE INDEX IF NOT EXISTS idx_movies_media_type ON movies(media_type)")
-    except Exception:
-        pass
-    try:
-        con.execute("CREATE INDEX IF NOT EXISTS idx_movies_show_se_ep ON movies(show_id, season, episode)")
-    except Exception:
-        pass
- 
-    # backfill media_type for old rows
-    try:
-        con.execute("UPDATE movies SET media_type='movie' WHERE media_type IS NULL OR media_type=''")
-    except Exception:
-        pass            
-            
-    con.execute("UPDATE movies SET added_at = COALESCE(added_at, CURRENT_TIMESTAMP)")
-    con.commit(); con.close()
-
-def delete_movie(movie_id: int):
-    con = db()
-    con.execute("DELETE FROM movies WHERE id=?", (movie_id,))
-    con.commit()
-    con.close()
-
-
-# -------------------- Filename -> title guess --------------------
-COMMON_TAGS = [
-    r"\b\d{3,4}p\b", r"\b4k\b", r"\b8k\b", r"\buhd\b", r"\bhdr10(\+)?\b", r"\bdv\b",
-    r"\bblu[- ]?ray\b", r"\bbrrip\b", r"\bwebrip\b", r"\bweb[- ]?dl\b", r"\bdvdrip\b",
-    r"\bh264\b", r"\bh265\b", r"\bhevc\b", r"\bx264\b", r"\bx265\b",
-    r"\bac3\b", r"\bdts\b", r"\batmos\b",
-    r"\bremux\b", r"\bproper\b", r"\brepack\b",
-    r"\bextended\b", r"\bdirectors[’']? cut\b",
-    r"\bs0?\d{1,2}e\d{1,3}\b",
-]
-
-def guess_title_year_from_filename(path):
-    name = os.path.splitext(os.path.basename(path))[0]
-    s = re.sub(r"[._]+", " ", name)
-    for pat in COMMON_TAGS:
-        s = re.sub(pat, " ", s, flags=re.IGNORECASE)
-    m = re.search(r"\b(19|20)\d{2}\b", s)
-    year = int(m.group(0)) if m else None
-    if year:
-        s = re.sub(rf"\b{year}\b", " ", s)
-    s = re.sub(r"\(\d{4}\)$", " ", s)
-    s = re.sub(r"\s{2,}", " ", s).strip()
-    return s, year
-
-# -------------------- ffprobe (optional) --------------------
-def ffprobe_info(path):
-    """Return (runtime_minutes, resolution_text) or (None, None) if ffprobe is missing."""
-    try:
-        out = subprocess.check_output(
-            ["ffprobe","-v","error","-show_entries","format=duration",
-             "-of","default=noprint_wrappers=1:nokey=1", path],
-            stderr=subprocess.STDOUT, text=True, timeout=10
-        ).strip()
-        dur_s = float(out) if out else None
-        minutes = int(round(dur_s/60.0)) if dur_s else None
-    except Exception:
-        minutes = None
-    res = None
-    try:
-        out = subprocess.check_output(
-            ["ffprobe","-v","error","-select_streams","v:0",
-             "-show_entries","stream=width,height",
-             "-of","csv=p=0", path],
-            stderr=subprocess.STDOUT, text=True, timeout=10
-        ).strip()
-        if out and "," in out:
-            w,h = out.split(",",1)
-            res = f"{w}x{h}"
-    except Exception:
-        res = None
-    return minutes, res
 
 # -------------------- Wikipedia search helpers (Discover tab) --------------------
 def wiki_search_titles(query, limit=10, lang="en"):
@@ -706,293 +593,7 @@ def fetch_wikidata_metadata(entity_id: str, lang="en") -> dict:
 
     return result
 
-# -------------------- Data ops --------------------
-def list_movies(filter_mode="all", search_term="", genre="All", sort_key="title_asc",
-               nav_mode: str = "root", nav_show_id: Optional[int] = None):
-    con = db()
-    # Root: show movies + shows (no episodes)
-    # Show view: show episodes for that show_id
-    base = "SELECT id, title, year, watch_count, genres, file_path, media_type, show_id, season, episode FROM movies"
-    clauses, params = [], []
-    
-    if nav_mode == "show":
-        clauses.append("media_type='episode'")
-        clauses.append("show_id=?")
-        params.append(int(nav_show_id or 0))
-        
-    else:
-        # show movies always
-        # show shows only if they have at least one episode
-        clauses.append("""
-            (
-                media_type='movie'
-                OR (
-                    media_type='show'
-                    AND EXISTS (
-                        SELECT 1 FROM movies e
-                        WHERE e.media_type='episode' AND e.show_id = movies.id
-                    )
-                )
-            )
-        """)
 
-    if filter_mode == "unwatched":
-        clauses.append("watch_count=0")
-    elif filter_mode == "watched":
-        clauses.append("watch_count>0")
-    if search_term:
-        clauses.append("title LIKE ?")
-        params.append(f"%{search_term}%")
-    if genre != "All":
-        clauses.append("genres LIKE ?")
-        params.append(f"%{genre}%")
-    if clauses:
-        base += " WHERE " + " AND ".join(clauses)
-
-    order_map = {
-        "title_asc":   "title COLLATE NOCASE ASC",
-        "title_desc":  "title COLLATE NOCASE DESC",
-        "year_asc":    "COALESCE(year, 9999) ASC, title COLLATE NOCASE ASC",
-        "year_desc":   "COALESCE(year, 0) DESC, title COLLATE NOCASE ASC",
-        "watched_asc": "watch_count ASC, title COLLATE NOCASE ASC",
-        "watched_desc":"watch_count DESC, title COLLATE NOCASE ASC",
-        "added_desc":  "datetime(added_at) DESC",
-        "added_asc":   "datetime(added_at) ASC",
-    }
-    
-    if nav_mode == "show":
-        # Episodes sort by season/episode, then title
-        base += " ORDER BY COALESCE(season, 0) ASC, COALESCE(episode, 0) ASC, title COLLATE NOCASE ASC"
-    else:
-        base += f" ORDER BY {order_map.get(sort_key, 'title COLLATE NOCASE ASC')}"
-  
-
-    rows = con.execute(base, params).fetchall()
-    con.close()
-    return rows
-
-def get_genres():
-    con = db()
-    rows = con.execute("SELECT DISTINCT genres FROM movies").fetchall()
-    con.close()
-    genres = set()
-    for r in rows:
-        if r[0]:
-            for g in r[0].split(","):
-                g = g.strip()
-                if g: genres.add(g)
-    return sorted(genres)
-
-def increment_watch(movie_id):
-    con = db()
-    con.execute("UPDATE movies SET watch_count = watch_count+1 WHERE id=?", (movie_id,))
-    con.commit(); con.close()
-
-def upsert_movie(values):
-    """
-    values: dict with keys:
-      id (optional), title, year, genres, overview,
-      poster_path, file_path, runtime_minutes, resolution
-      media_type ('movie'|'show'|'episode'), show_id, season, episode
-
-    If id is provided and exists, update that row.
-    Otherwise fall back to file_path or (title, year) to find or insert.
-    """
-    con = db()
-    cur = con.cursor()
-
-    row = None
-    movie_id = values.get("id")
-
-    # 1) If we have an explicit id from EditDialog, prefer that
-    if movie_id is not None:
-        row = cur.execute("SELECT id FROM movies WHERE id=?", (movie_id,)).fetchone()
-
-    # 2) Otherwise try to match by file_path
-    if row is None and values.get("file_path"):
-        row = cur.execute(
-            "SELECT id FROM movies WHERE file_path=?",
-            (values["file_path"],)
-        ).fetchone()
-
-    # 3) Otherwise try title + year
-    if row is None and values.get("title") and values.get("year"):
-        row = cur.execute(
-            "SELECT id FROM movies WHERE title=? AND year=?",
-            (values["title"], values["year"])
-        ).fetchone()
-
-    if row is not None:
-        movie_id = row[0]
-        cur.execute(
-            """UPDATE movies
-               SET title=?,
-                   year=?,
-                   genres=?,
-                   overview=?,
-                   poster_path=?,
-                   file_path=?,
-                   runtime_minutes=?,
-                   resolution=?,
-                   media_type=?,
-                   show_id=?,
-                   season=?,
-                   episode=?
-             WHERE id=?""",
-            (
-                values.get("title"),
-                values.get("year"),
-                values.get("genres"),
-                values.get("overview"),
-                values.get("poster_path"),
-                values.get("file_path"),
-                values.get("runtime_minutes"),
-                values.get("resolution"),
-                values.get("media_type", "movie"),
-                values.get("show_id"),
-                values.get("season"),
-                values.get("episode"),
-                movie_id,
-            ),
-        )
-    else:
-        cur.execute(
-            """INSERT INTO movies
-               (title, year, genres, overview, poster_path,
-                file_path, runtime_minutes, resolution,
-                media_type, show_id, season, episode)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                values.get("title"),
-                values.get("year"),
-                values.get("genres"),
-                values.get("overview"),
-                values.get("poster_path"),
-                values.get("file_path"),
-                values.get("runtime_minutes"),
-                values.get("resolution"),
-                values.get("media_type", "movie"),
-                values.get("show_id"),
-                values.get("season"),
-                values.get("episode"),
-            ),
-        )
-        movie_id = cur.lastrowid
-
-    con.commit()
-    con.close()
-    return movie_id
-
-
-# -------------------- Stats --------------------
-def get_stats():
-    con = db()
-
-    # --- Counts by type ---
-    movies_total = con.execute(
-        "SELECT COUNT(*) FROM movies WHERE media_type='movie'"
-    ).fetchone()[0]
-
-    shows_total = con.execute(
-        "SELECT COUNT(*) FROM movies WHERE media_type='show'"
-    ).fetchone()[0]
-
-    episodes_total = con.execute(
-        "SELECT COUNT(*) FROM movies WHERE media_type='episode'"
-    ).fetchone()[0]
-
-    # --- Watched counts ---
-    movies_watched = con.execute(
-        "SELECT COUNT(*) FROM movies WHERE media_type='movie' AND watch_count>0"
-    ).fetchone()[0]
-
-    episodes_watched = con.execute(
-        "SELECT COUNT(*) FROM movies WHERE media_type='episode' AND watch_count>0"
-    ).fetchone()[0]
-
-    # --- Total watch counts ---
-    movies_watch_total = con.execute(
-        "SELECT IFNULL(SUM(watch_count),0) FROM movies WHERE media_type='movie'"
-    ).fetchone()[0]
-
-    episodes_watch_total = con.execute(
-        "SELECT IFNULL(SUM(watch_count),0) FROM movies WHERE media_type='episode'"
-    ).fetchone()[0]
-
-    # --- Top watched (movies only) ---
-    top_movies = con.execute("""
-        SELECT title, watch_count
-        FROM movies
-        WHERE media_type='movie' AND watch_count>0
-        ORDER BY watch_count DESC, title ASC
-        LIMIT 10
-    """).fetchall()
-
-    # --- Top watched (episodes only, show title included) ---
-    top_episodes = con.execute("""
-        SELECT
-            COALESCE(s.title, 'Unknown Show') AS show_title,
-            e.season, e.episode,
-            e.title,
-            e.watch_count
-        FROM movies e
-        LEFT JOIN movies s ON s.id = e.show_id
-        WHERE e.media_type='episode' AND e.watch_count>0
-        ORDER BY e.watch_count DESC, show_title ASC
-        LIMIT 10
-    """).fetchall()
-
-    # --- Recently added (all types, show context for episodes) ---
-    recent = con.execute("""
-        SELECT
-            m.media_type,
-            m.title,
-            m.year,
-            datetime(m.added_at),
-            s.title AS show_title,
-            m.season,
-            m.episode
-        FROM movies m
-        LEFT JOIN movies s ON s.id = m.show_id
-        ORDER BY datetime(m.added_at) DESC
-        LIMIT 10
-    """).fetchall()
-
-    # --- Genres (movies only, since shows/episodes usually have blank genres) ---
-    rows = con.execute("""
-        SELECT genres FROM movies
-        WHERE media_type='movie' AND genres IS NOT NULL AND genres<>''
-    """).fetchall()
-
-    con.close()
-
-    genre_counts = {}
-    for (gstr,) in rows:
-        for g in [s.strip() for s in gstr.split(",") if s.strip()]:
-            genre_counts[g] = genre_counts.get(g, 0) + 1
-    top_genres = sorted(genre_counts.items(), key=lambda x: (-x[1], x[0]))[:10]
-
-    return {
-        "movies_total": int(movies_total),
-        "shows_total": int(shows_total),
-        "episodes_total": int(episodes_total),
-
-        "movies_watched": int(movies_watched),
-        "movies_unwatched": int(movies_total - movies_watched),
-
-        "episodes_watched": int(episodes_watched),
-        "episodes_unwatched": int(episodes_total - episodes_watched),
-
-        "movies_watch_total": int(movies_watch_total),
-        "episodes_watch_total": int(episodes_watch_total),
-
-        "top_movies": top_movies,
-        "top_episodes": top_episodes,
-
-        "recent": recent,
-        "top_genres": top_genres,
-    }
-    
 # -------------------- Edit Dialog --------------------
 class EditDialog(ctk.CTkToplevel):
     def __init__(self, master, values):
@@ -1635,6 +1236,59 @@ class MovieApp(ctk.CTk):
 
     # -------- helpers --------
 
+    def start_tv_mode_ui(self):
+        ok, msg = start_tv_mode()
+        if ok:
+            self.set_status(msg)
+            messagebox.showinfo(
+                "VisionVault TV",
+                f"{msg}\n\nOpen this on your TV:\n{get_tv_mode_url()}"
+            )
+        else:
+            self.set_status(msg)
+            messagebox.showerror("VisionVault TV", msg)
+
+
+    def stop_tv_mode_ui(self):
+        ok, msg = stop_tv_mode()
+        self.set_status(msg)
+        if ok:
+            messagebox.showinfo("VisionVault TV", msg)
+        else:
+            messagebox.showwarning("VisionVault TV", msg)
+
+
+    def open_tv_mode_ui(self):
+        if not is_tv_mode_running():
+            ok, msg = start_tv_mode()
+            if not ok:
+                self.set_status(msg)
+                messagebox.showerror("VisionVault TV", msg)
+                return
+
+        ok, msg = open_tv_mode_in_browser()
+        if ok:
+            self.set_status(f"Opened TV Mode: {msg}")
+            messagebox.showinfo(
+                "VisionVault TV",
+                f"TV Mode is available at:\n{msg}\n\nOpen that address on your TV browser."
+            )
+        else:
+            self.set_status(msg)
+            messagebox.showerror("VisionVault TV", msg)
+
+
+    def show_tv_mode_url_ui(self):
+        url = get_tv_mode_url()
+        self.clipboard_clear()
+        self.clipboard_append(url)
+        self.update()
+        self.set_status(f"Copied TV Mode URL: {url}")
+        messagebox.showinfo(
+            "VisionVault TV URL",
+            f"Open this on your TV browser:\n\n{url}\n\nThe URL was also copied to your clipboard."
+        )
+
     def _ctx_convert_to_3d(self):
         if not self._ctx_target_id:
             return
@@ -2136,99 +1790,6 @@ class MovieApp(ctk.CTk):
         self._popup_context_menu(event)
         return "break"
 
-    def parse_encoded_episode_filename(self, path: str):
-        """
-        Supports:
-          'Show Title - S01E01 - Episode Name.ext'
-          'Show Title - S01E01.ext'
-        Returns (show_title, season, episode, ep_title) or None
-        """
-        name = os.path.splitext(os.path.basename(path))[0].strip()
-
-        m = re.search(
-            r"(?i)^(.*?)\s*-\s*S(\d{1,3})E(\d{1,4})(?:\s*-\s*(.*?))?\s*$",
-            name
-        )
-        if not m:
-            return None
-
-        show_title = (m.group(1) or "").strip(" ._-")
-        season = int(m.group(2))
-        episode = int(m.group(3))
-        ep_title = (m.group(4) or "").strip(" ._-")
-
-        if not show_title:
-            return None
-
-        # If there was no explicit episode title, fall back to the filename stem
-        if not ep_title:
-            ep_title = f"S{season:02d}E{episode:02d}"
-
-        return show_title, season, episode, ep_title
-
-    def _parse_episode_tag(self, path: str) -> Optional[Tuple[int, int, str]]:
-        """
-        Returns (season, episode, show_guess) if filename contains SxxEyy or 1x02 style.
-        show_guess is a cleaned title guess from the left side of the match.
-        """
-        name = os.path.splitext(os.path.basename(path))[0]
-
-        m = re.search(r"(?i)\bS(\d{1,2})\s*E(\d{1,3})\b", name)
-        if m:
-            season = int(m.group(1))
-            episode = int(m.group(2))
-            left = name[:m.start()].strip(" ._-")
-            show_guess, _ = guess_title_year_from_filename(left) if left else guess_title_year_from_filename(path)
-            return season, episode, (show_guess or "").strip()
-
-        m = re.search(r"(?i)\b(\d{1,2})\s*x\s*(\d{1,3})\b", name)
-        if m:
-            season = int(m.group(1))
-            episode = int(m.group(2))
-            left = name[:m.start()].strip(" ._-")
-            show_guess, _ = guess_title_year_from_filename(left) if left else guess_title_year_from_filename(path)
-            return season, episode, (show_guess or "").strip()
-
-        return None
-
-
-    def _ensure_show_row(self, show_title: str, year: Optional[int] = None) -> Optional[int]:
-        """Find or create a show row, return show_id."""
-        show_title = (show_title or "").strip()
-        if not show_title:
-            return None
-
-        try:
-            con = db()
-            row = con.execute(
-                "SELECT id FROM movies WHERE media_type='show' AND title=?",
-                (show_title,)
-            ).fetchone()
-            con.close()
-            if row:
-                return int(row[0])
-        except Exception:
-            pass
-
-        # create show
-        show_values = {
-            "title": show_title,
-            "year": year,
-            "genres": "",
-            "overview": "",
-            "poster_path": None,
-            "file_path": None,
-            "runtime_minutes": None,
-            "resolution": None,
-            "media_type": "show",
-            "show_id": None,
-            "season": None,
-            "episode": None,
-        }
-        return upsert_movie(show_values)
-
-
-
     def discover_search(self):
         q = (self.disc_search_entry.get() or "").strip()
         if not q:
@@ -2474,6 +2035,7 @@ class MovieApp(ctk.CTk):
         if key in self._tile_img_cache:
             return self._tile_img_cache[key]
         try:
+            poster_path = resolve_existing_path(poster_path)
             if poster_path and os.path.exists(poster_path):
                 img = Image.open(poster_path).convert("RGBA")
                 tw, th = self._fit_poster_size(*img.size, max_w=max_w, max_h=max_h)
@@ -2593,7 +2155,7 @@ class MovieApp(ctk.CTk):
         self.desc_box.configure(cursor="arrow")
 
 
-        poster_path = row[3]
+        poster_path = resolve_existing_path(row[3])
         if poster_path and os.path.exists(poster_path):
             try:
                 img = Image.open(poster_path).convert("RGBA").copy()
@@ -2643,6 +2205,15 @@ class MovieApp(ctk.CTk):
         themes_menu.add_cascade(label="Color Theme", menu=color_menu)
 
         menubar.add_cascade(label="Themes", menu=themes_menu)
+
+        # TV Mode
+        tv_menu = tk.Menu(menubar, tearoff=0)
+        tv_menu.add_command(label="Start TV Mode", command=self.start_tv_mode_ui)
+        tv_menu.add_command(label="Stop TV Mode", command=self.stop_tv_mode_ui)
+        tv_menu.add_separator()
+        tv_menu.add_command(label="Open TV Mode in Browser", command=self.open_tv_mode_ui)
+        tv_menu.add_command(label="Show TV URL", command=self.show_tv_mode_url_ui)
+        menubar.add_cascade(label="TV Mode", menu=tv_menu)
 
         # Help
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -2885,7 +2456,7 @@ class MovieApp(ctk.CTk):
                 # root: movie or show
                 if media_type == "show":
                     # show summary: watched episodes / total
-                    w, t = self._show_progress(mid)
+                    w, t = get_show_progress(mid)
                     prog = f" • {w}/{t} watched" if t else ""
                     self.listbox.insert("end", f"{idx}: {title} [{genres}]{prog}\n")
                 else:
@@ -2932,7 +2503,7 @@ class MovieApp(ctk.CTk):
         show_ids = {}  # cache show_title -> show_id
 
         for path in sorted(files, key=lambda x: os.path.basename(x).lower()):
-            parsed = self.parse_encoded_episode_filename(path)
+            parsed = parse_encoded_episode_filename(path)
             if not parsed:
                 skipped += 1
                 continue
@@ -2941,7 +2512,7 @@ class MovieApp(ctk.CTk):
 
             # create/find show row once
             if show_title not in show_ids:
-                show_id = self._ensure_show_row(show_title)
+                show_id = ensure_show_row(show_title)
                 if not show_id:
                     skipped += 1
                     continue
@@ -3134,7 +2705,7 @@ class MovieApp(ctk.CTk):
 
         minutes, res = ffprobe_info(path)
 
-        ep = self._parse_episode_tag(path)
+        ep = parse_episode_tag(path)
         if ep:
             season, episode, show_guess = ep
             add_as_ep = messagebox.askyesno(
@@ -3146,7 +2717,7 @@ class MovieApp(ctk.CTk):
                     show_guess = simpledialog.askstring("Show Title", "Show title?", parent=self) or ""
                     show_guess = show_guess.strip()
 
-                show_id = self._ensure_show_row(show_guess)
+                show_id = ensure_show_row(show_guess)
                 if not show_id:
                     self.set_status("Could not create or find show.")
                     return
@@ -3386,14 +2957,12 @@ class MovieApp(ctk.CTk):
             self.col_recent.insert("end", "No recent items\n")
 
     def refresh_grid(self):
-        # keep grid for root only. If inside show, we auto-list mode anyway.
         if self.nav_mode == "show":
             self.view_mode.set("list")
             self._show_view("list")
             self.refresh_list()
             return
-            
-        # clear previous tiles
+
         for child in self.grid_inner.winfo_children():
             child.destroy()
 
@@ -3411,7 +2980,6 @@ class MovieApp(ctk.CTk):
             nav_show_id=self.nav_show_id
         )
 
-        # layout parameters (bigger posters)
         COLS = 3
         self.grid_cols = COLS
         PADX, PADY = 5, 7
@@ -3420,27 +2988,26 @@ class MovieApp(ctk.CTk):
         self.grid_ids = []
         self.grid_tile_frames = {}
 
-        # keep references so images aren’t GC’d
         if not hasattr(self, "_tile_buttons"):
             self._tile_buttons = []
         self._tile_buttons.clear()
 
-        for idx, (mid, title, year, count, genres, fpath, media_type, show_id, season, episode) in enumerate(rows):
+        for idx, item in enumerate(rows):
+            mid = item["id"]
+            title = item.get("title") or ""
+            year = item.get("year")
+            count = item.get("watch_count", 0)
+            genres = item.get("genres") or ""
+            fpath = item.get("file_path")
+            media_type = item.get("media_type") or "movie"
+            poster_path = item.get("poster_path")
+
             r = idx // COLS
             c = idx % COLS
 
-            poster_path = None
-            try:
-                con = db()
-                pp = con.execute("SELECT poster_path FROM movies WHERE id=?", (mid,)).fetchone()
-                con.close()
-                poster_path = pp[0] if pp else None
-            except Exception:
-                poster_path = None
-
             img = self._load_tile_image(poster_path, max_w=TILE_W, max_h=TILE_H)
 
-            TEXT_H = 44  # space for 2-ish lines
+            TEXT_H = 44
             OUTER_W = TILE_W + 14
             OUTER_H = TILE_H + TEXT_H + 14
 
@@ -3457,7 +3024,6 @@ class MovieApp(ctk.CTk):
             tile_frame.grid(row=r, column=c, padx=PADX, pady=PADY, sticky="n")
             tile_frame.grid_propagate(False)
 
-            # image-only button
             img_btn = ctk.CTkButton(
                 tile_frame,
                 image=img,
@@ -3470,12 +3036,13 @@ class MovieApp(ctk.CTk):
             )
             img_btn.pack(padx=7, pady=(7, 4))
 
-            # label text (wrapped/clamped, cannot change frame width)
             base = f"{title} ({year})" if year else f"{title}"
             label_text = self._clamp_lines(base, max_chars_per_line=28, max_lines=2)
 
             if media_type == "show":
-                w, t = self._show_progress(mid)
+                progress = item.get("episode_progress") or {}
+                w = progress.get("watched", 0)
+                t = progress.get("total", 0)
                 if t:
                     label_text = self._clamp_lines(title, 28, 2) + f"\n{w}/{t} watched"
 
@@ -3487,12 +3054,10 @@ class MovieApp(ctk.CTk):
             )
             lbl.pack(padx=8, pady=(0, 7))
 
-            # hover effect across full tile
             self._bind_tile_hover(tile_frame, mid)
             self._bind_tile_hover(img_btn, mid)
             self._bind_tile_hover(lbl, mid)
 
-            # right-click context menu (bind all so it works anywhere on the tile)
             img_btn.bind("<Button-3>", lambda e, m=mid: self._on_grid_right_click(e, m))
             img_btn.bind("<Control-Button-1>", lambda e, m=mid: self._on_grid_right_click(e, m))
             lbl.bind("<Button-3>", lambda e, m=mid: self._on_grid_right_click(e, m))
@@ -3500,12 +3065,10 @@ class MovieApp(ctk.CTk):
             tile_frame.bind("<Button-3>", lambda e, m=mid: self._on_grid_right_click(e, m))
             tile_frame.bind("<Control-Button-1>", lambda e, m=mid: self._on_grid_right_click(e, m))
 
-            # keep references (not strictly needed for frame/label, but fine to track)
             self._tile_buttons.append(img_btn)
             self.grid_ids.append(mid)
             self.grid_tile_frames[mid] = tile_frame
-            
-        # update scrollregion
+
         self.grid_inner.update_idletasks()
         self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all"))
         self._highlight_selected_grid_tile()
@@ -3660,26 +3223,15 @@ class MovieApp(ctk.CTk):
         except Exception:
             pass
 
+        try:
+            stop_tv_mode()
+        except Exception:
+            pass
+
         save_settings(settings)
         self.destroy()
 
     # --- TV helpers ---
-    def _show_progress(self, show_id: int) -> Tuple[int, int]:
-        try:
-            con = db()
-            total = con.execute(
-                "SELECT COUNT(*) FROM movies WHERE media_type='episode' AND show_id=?",
-                (int(show_id),)
-            ).fetchone()[0]
-            watched = con.execute(
-                "SELECT COUNT(*) FROM movies WHERE media_type='episode' AND show_id=? AND watch_count>0",
-                (int(show_id),)
-            ).fetchone()[0]
-            con.close()
-            return int(watched), int(total)
-        except Exception:
-            return (0, 0)
-
     def _maybe_set_show_poster_from_episode(self, show_id: int, episode_poster: str | None):
         if not show_id or not episode_poster or not os.path.exists(episode_poster):
             return
