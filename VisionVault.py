@@ -932,6 +932,14 @@ class MovieApp(ctk.CTk):
         )
         self.add_file_btn.pack(side="left")
 
+        self.import_movies_btn = ctk.CTkButton(
+            row1,
+            text="Import Movie Folder",
+            width=170,
+            command=self.import_movie_folder
+        )
+        self.import_movies_btn.pack(side="left", padx=(6, 0))
+
         self.import_tv_btn = ctk.CTkButton(
             row1,
             text="Import TV Show",
@@ -939,7 +947,6 @@ class MovieApp(ctk.CTk):
             command=self.import_encoded_tv_folder
         )
         self.import_tv_btn.pack(side="left", padx=(6, 0))
-
 
         # ROW 2: filters + sort aligned to the right
         row2 = ctk.CTkFrame(topbar)
@@ -1323,6 +1330,7 @@ class MovieApp(ctk.CTk):
         button_widgets = [
             getattr(self, "add_title_btn", None),
             getattr(self, "add_file_btn", None),
+            getattr(self, "import_movies_btn", None),
             getattr(self, "import_tv_btn", None),
             getattr(self, "back_btn", None),
             getattr(self, "watch_btn", None),
@@ -1332,7 +1340,7 @@ class MovieApp(ctk.CTk):
             getattr(self, "disc_search_btn", None),
             getattr(self, "btn_refresh_stats", None),
         ]
-
+        
         for btn in button_widgets:
             if btn is not None:
                 try:
@@ -2179,6 +2187,7 @@ class MovieApp(ctk.CTk):
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="Add by Title", command=self.add_by_title)
         file_menu.add_command(label="Add by File", command=self.add_by_file)
+        file_menu.add_command(label="Import Movie Folder", command=self.import_movie_folder)
         file_menu.add_command(label="Import TV Show", command=self.import_encoded_tv_folder)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.on_close)
@@ -2481,6 +2490,55 @@ class MovieApp(ctk.CTk):
             except Exception:
                 pass
 
+    def import_movie_folder(self):
+        folder = filedialog.askdirectory(title="Select folder containing movies")
+        if not folder:
+            return
+
+        exts = {".mp4", ".mkv", ".avi", ".mov", ".m4v", ".wmv"}
+        files = []
+
+        for fn in os.listdir(folder):
+            p = os.path.join(folder, fn)
+            if os.path.isfile(p) and os.path.splitext(fn)[1].lower() in exts:
+                files.append(p)
+
+        if not files:
+            messagebox.showinfo("Import", "No video files found in that folder.")
+            return
+
+        imported = 0
+        skipped = 0
+
+        for path in sorted(files, key=lambda x: os.path.basename(x).lower()):
+            try:
+                guess_title, guess_year = guess_title_year_from_filename(path)
+                minutes, res = ffprobe_info(path)
+
+                values = {
+                    "title": guess_title or os.path.splitext(os.path.basename(path))[0],
+                    "year": guess_year,
+                    "genres": "",
+                    "overview": "",
+                    "poster_path": None,
+                    "file_path": path,
+                    "runtime_minutes": minutes,
+                    "resolution": res,
+                    "media_type": "movie",
+                    "show_id": None,
+                    "season": None,
+                    "episode": None,
+                }
+
+                upsert_movie(values)
+                imported += 1
+            except Exception:
+                skipped += 1
+
+        self.refresh_list()
+        self.refresh_stats()
+        self.set_status(f"Imported {imported} movies. Skipped {skipped}.")
+        messagebox.showinfo("Import done", f"Imported {imported} movies.\nSkipped {skipped}.")
 
     def import_encoded_tv_folder(self):
         folder = filedialog.askdirectory(title="Select encoded TV folder")
