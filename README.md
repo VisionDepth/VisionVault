@@ -11,22 +11,24 @@
 </p>
 
 <p align="center">
-<strong>VisionVault</strong> is a sleek, fast, fully <strong>offline movie & TV library manager</strong> built with <strong>CustomTkinter + SQLite</strong>.<br>
-Organize your collection, browse cinematic poster grids, track watch history, and launch media from one clean interface.
-</p>
-
-<p align="center"> No accounts • No cloud • No subscriptions • 100% local
+<strong>VisionVault</strong> is a modern <strong>offline movie &amp; TV library manager</strong> built with <strong>CustomTkinter, Flask, and SQLite</strong>.<br>
+Manage your personal collection, browse cinematic poster grids, track watch history, launch local files, and access your library through the built-in <strong>Web UI / TV Mode</strong> for browser and TV playback.
 </p>
 
 <p align="center">
-Optional <strong>Wikipedia-powered metadata & posters</strong> instantly enrich your library while keeping everything private.
+No accounts • No cloud • No subscriptions • 100% local
 </p>
 
 <p align="center">
-Your personal media vault — fully under your control.
+Optional <strong>Wikipedia-powered metadata and posters</strong> make it easy to enrich your collection while keeping everything private and under your control.
+</p>
+
+<p align="center">
+A personal media vault designed for collectors who want a clean desktop experience with the flexibility of local web playback.
 </p>
 
 ---
+
 ## Key Features
 
 ### Library Management
