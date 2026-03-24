@@ -1,5 +1,4 @@
 customtkinter
+Flask
 requests
 Pillow
-pyinstaller
-requests
