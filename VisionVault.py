@@ -6,8 +6,11 @@ import tkinter as tk
 from functools import partial
 from typing import Optional, Tuple
 import textwrap
+import requests
+import urllib.parse
+from pathlib import Path
 
-from vault_core import (
+from core.vault_core import (
     BASE_DIR,
     POSTERS,
     db,
@@ -2452,7 +2455,16 @@ class MovieApp(ctk.CTk):
             nav_show_id=self.nav_show_id
         )
 
-        for idx, (mid, title, year, count, genres, fpath, media_type, show_id, season, episode) in enumerate(rows, start=1):
+        for idx, item in enumerate(rows, start=1):
+            mid = item["id"]
+            title = item.get("title")
+            year = item.get("year")
+            count = item.get("watch_count", 0)
+            genres = item.get("genres") or ""
+            fpath = item.get("file_path")
+            media_type = item.get("media_type") or "movie"
+            season = item.get("season")
+            episode = item.get("episode")
             file_mark = " • file" if fpath else ""
             if self.nav_mode == "show":
                 # episode line format
@@ -3052,12 +3064,15 @@ class MovieApp(ctk.CTk):
 
         for idx, item in enumerate(rows):
             mid = item["id"]
-            title = item.get("title") or ""
+            title = item.get("title")
             year = item.get("year")
             count = item.get("watch_count", 0)
             genres = item.get("genres") or ""
             fpath = item.get("file_path")
             media_type = item.get("media_type") or "movie"
+            show_id = item.get("show_id")
+            season = item.get("season")
+            episode = item.get("episode")
             poster_path = item.get("poster_path")
 
             r = idx // COLS
