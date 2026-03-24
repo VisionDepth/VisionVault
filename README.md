@@ -27,27 +27,30 @@ Your personal media vault — fully under your control.
 </p>
 
 ---
-
 ## Key Features
 
 ### Library Management
 - Add movies by **title** or **file**
-- Automatic title & year detection from filenames
+- Automatic title and year detection from filenames
 - Local SQLite database storage (`movies.db`)
-- Edit everything:
-  - Title, year, genres
-  - Runtime & resolution
-  - Overview & poster
+- Edit full metadata:
+  - Title
+  - Year
+  - Genres
+  - Runtime
+  - Resolution
+  - Overview
+  - Poster
   - File path
 - Delete entries cleanly
 - Track watch history
-- Launch movies directly from the app
+- Launch movies directly from the desktop app
 
 ---
 
 ### TV Show Support
 - Import entire TV show folders
-- Automatic show + episode structure
+- Automatic show and episode structure
 - Episode naming format:
   - `S01E01 - Episode Name`
   - `S01E02 - Episode Name`
@@ -56,19 +59,45 @@ Your personal media vault — fully under your control.
   - Descriptions
   - Metadata
 - Progress tracking per show
+- Automatic show poster inheritance from episode artwork
+- Optional poster propagation across episodes that do not already have artwork
+
+---
+
+### TV Mode Web Interface
+- Launch a browser-based **VisionVault TV** interface directly from the desktop app
+- Browse your library from another device on your local network
+- Stream movies directly in-browser
+- TV-friendly navigation layout for couch or remote-style use
+- Dedicated sections for:
+  - Continue Watching
+  - Movies
+  - Shows
+  - Recently Added
+- Built-in movie detail pages, stats page, and full movie library page
+
+---
+
+### Resume Playback
+- Browser playback now saves watch progress
+- Resume movies from your last saved position
+- **Resume** and **Start Over** options appear on supported items
+- Completed playback clears saved progress automatically
+- Browser playback and desktop stats stay in sync
 
 ---
 
 ### Grid View (Modern Media Wall)
 - Poster-focused tiled layout
 - Uniform sizing with clean alignment
-- Clamped and wrapped titles (no stretching)
+- Clamped and wrapped titles without stretching
 - Dense, directory-style browsing
 - Fully integrated with:
   - Sorting
   - Filters
   - Show navigation
   - Right-click context menu
+  - Keyboard navigation
 
 ---
 
@@ -76,21 +105,22 @@ Your personal media vault — fully under your control.
 - Clean detailed list layout
 - Highlighted selection
 - Larger readable text spacing
+- Fast keyboard-friendly browsing
 
 ---
 
 ### Search, Filter & Sort
 - Live search by title
-- Filter:
+- Filter by:
   - All
   - Watched
   - Unwatched
 - Genre filter (auto-generated)
 - Sort by:
-  - Title A–Z / Z–A
-  - Year ↑ / ↓
-  - Watched ↑ / ↓
-  - Recently added / Oldest
+  - Title A-Z / Z-A
+  - Year up / down
+  - Watched up / down
+  - Recently added / oldest added
 
 ---
 
@@ -104,20 +134,42 @@ Your personal media vault — fully under your control.
 
 ---
 
+### Keyboard Navigation
+- Full keyboard navigation support in the desktop app
+- Shortcuts include:
+  - **Enter** to play
+  - **Space** to mark watched
+  - **E** to edit
+  - **Delete** to remove selected item
+  - **Backspace / Escape** to return from show episode view
+- Smooth auto-scroll keeps selected items visible while browsing
+
+---
+
+### Themes and Interface Customization
+- Multiple accent color themes
+- Supports **Dark / Light / System** appearance modes
+- Theme styling updates buttons, highlights, borders, and dialog accents
+- Cleaner desktop-style menu bar for app controls
+
+---
+
 ### Quality of Life
 VisionVault automatically remembers:
 - Window size and position
 - Split panel layout
-- Dark / Light / System theme
+- Dark / Light / System appearance
+- Active theme
 - Last selected item
-- Grid/List view mode
+- Grid or List view mode
+
 Saved locally in:
 
-movie_inventory_settings.json
+`movie_inventory_settings.json`
 
 Posters are cached locally in:
 
-posters/
+`posters/`
 
 ---
 
@@ -138,41 +190,96 @@ posters/
 2. Select a video file
 3. VisionVault will:
    - Guess title and year
-   - Detect runtime and resolution (via ffprobe if installed)
+   - Detect runtime and resolution using ffprobe if installed
 4. Edit if needed and save
 
 ---
 
-### Watching and Playing
-- **Play** opens your movie in the default OS player  
-- If playback launches successfully, watch count increments automatically  
-- Or manually use **Mark as Watched**
+### Import TV Shows
+1. Click **Import TV Show**
+2. Select a folder of encoded episode files
+3. VisionVault will build the show and episode structure automatically
+4. Edit posters or metadata if needed
 
 ---
 
-### Grid Browsing
-Switch to **Grid View** to browse your collection visually like a media wall.  
-Click any poster to view full details.
+### Watching and Playing
+- **Play** opens your movie in the default OS player from the desktop app
+- Successful desktop playback increments watch count automatically
+- In **TV Mode**, movies can be streamed directly in-browser
+- Browser playback supports saved resume progress
+- You can also manually use **Mark as Watched**
+
+---
+
+### TV Mode
+1. Open the **TV Mode** menu from the desktop app
+2. Start the TV web interface
+3. Open the provided local network URL on your browser or TV
+4. Browse and stream your collection from the web interface
 
 ---
 
 ## Notes
 - Internet is only required for Wikipedia metadata fetching
-- The app works fully offline otherwise
+- The desktop app works fully offline otherwise
+- TV Mode works over your local network
 - All posters are stored locally for fast loading
 - If you move files, update the file path in **Edit Details**
 
 ---
 
 ## Built With
-- CustomTkinter  
-- SQLite  
-- Wikipedia Action API  
+- CustomTkinter
+- Flask
+- SQLite
+- Wikipedia Action API
 
 ---
 
 ## Download
-Grab the standalone Windows `.exe` from:  
-https://github.com/VisionDepth/VisionVault/releases  
 
-No Python required.
+Grab the standalone Windows `.exe` from the Releases page when a new version becomes available.
+
+## Manual Install
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/VisionDepth/VisionVault.git
+cd VisionVault
+```
+
+### 2. Create and activate a Conda environment
+
+```bash
+conda create -n VisionVault python=3.13
+conda activate VisionVault
+```
+
+### 3. Or create a standard virtual environment
+
+```bash
+python -m venv venv
+```
+
+### 4. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 5. Launch VisionVault
+
+```bash
+python visionvault.py
+```
+
+## Notes for Manual Install
+
+- `vault_core.py`, `visionvault.py`, and `visionvault_web.py` should stay in the same project folder
+- TV Mode uses the same local database as the desktop app
+- Posters are stored locally in the `posters/` folder
+- Settings are stored in `movie_inventory_settings.json`
+- `ffprobe` is recommended for automatic runtime and resolution detection
+
