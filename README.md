@@ -1,7 +1,7 @@
 <h1 align="center"> VisionVault — Offline Movie & TV Library Manager</h1>
 
 <p align="center">
- <img width="700" alt="VisionVault Grid Layout" src="https://github.com/user-attachments/assets/19707ee8-b14a-46aa-b585-fa3468a6ed6b" />
+  <img width="700" alt="VisionVault UI" src="assets/VisionVault-UI.gif" />
 </p>
 
 <p align="center">
@@ -33,6 +33,7 @@ A personal media vault designed for collectors who want a clean desktop experien
 
 ### Library Management
 - Add movies by **title** or **file**
+- Import movie folders with **recursive subfolder scanning**
 - Automatic title and year detection from filenames
 - Local SQLite database storage (`movies.db`)
 - Edit full metadata:
@@ -43,6 +44,7 @@ A personal media vault designed for collectors who want a clean desktop experien
   - Resolution
   - Overview
   - Poster
+  - Animated poster
   - File path
 - Delete entries cleanly
 - Track watch history
@@ -50,9 +52,19 @@ A personal media vault designed for collectors who want a clean desktop experien
 
 ---
 
+### Animated Poster Support
+- Add **animated posters** alongside standard poster art
+- Supports animated artwork formats including **`.gif`**
+- Animated posters only play when a title is **selected**
+- Helps keep the library visually clean while still adding motion to focused items
+- Animated poster controls are built directly into the **Edit Details** dialog
+
+---
+
 ### TV Show Support
 - Import entire TV show folders
 - Automatic show and episode structure
+- Recursive subfolder support for organized TV libraries
 - Episode naming format:
   - `S01E01 - Episode Name`
   - `S01E02 - Episode Name`
@@ -77,15 +89,26 @@ A personal media vault designed for collectors who want a clean desktop experien
   - Shows
   - Recently Added
 - Built-in movie detail pages, stats page, and full movie library page
+- Branded VisionVault TV layout with logo support and a polished featured hero section
 
 ---
 
-### Resume Playback
-- Browser playback now saves watch progress
+### Browser Playback and Subtitles
+- Stream movies directly in the VisionVault TV web player
 - Resume movies from your last saved position
 - **Resume** and **Start Over** options appear on supported items
 - Completed playback clears saved progress automatically
-- Browser playback and desktop stats stay in sync
+- Subtitle support for matching subtitle files during browser playback
+- Supports subtitle lookup beside the movie file and in common subtitle subfolders
+
+---
+
+### Resume and Watch Tracking
+- Browser playback saves watch progress
+- Desktop and web playback share the same core watch tracking system
+- Recent watch activity can be reflected more cleanly across connected clients
+- Successful desktop playback increments watch count automatically
+- You can also manually use **Mark as Watched**
 
 ---
 
@@ -94,6 +117,7 @@ A personal media vault designed for collectors who want a clean desktop experien
 - Uniform sizing with clean alignment
 - Clamped and wrapped titles without stretching
 - Dense, directory-style browsing
+- Animated posters can be previewed on selected items
 - Fully integrated with:
   - Sorting
   - Filters
@@ -197,11 +221,20 @@ Posters are cached locally in:
 
 ---
 
+### Import Movie Folders
+1. Click **Import Movie Folder**
+2. Select your main movie folder
+3. VisionVault can scan supported video files in **subfolders automatically**
+4. Imported titles can then be edited normally if needed
+
+---
+
 ### Import TV Shows
 1. Click **Import TV Show**
 2. Select a folder of encoded episode files
-3. VisionVault will build the show and episode structure automatically
-4. Edit posters or metadata if needed
+3. VisionVault can scan organized episode folders and subfolders automatically
+4. VisionVault will build the show and episode structure automatically
+5. Edit posters or metadata if needed
 
 ---
 
@@ -210,6 +243,7 @@ Posters are cached locally in:
 - Successful desktop playback increments watch count automatically
 - In **TV Mode**, movies can be streamed directly in-browser
 - Browser playback supports saved resume progress
+- Matching subtitle files can be used during supported web playback
 - You can also manually use **Mark as Watched**
 
 ---
@@ -228,6 +262,7 @@ Posters are cached locally in:
 - TV Mode works over your local network
 - All posters are stored locally for fast loading
 - If you move files, update the file path in **Edit Details**
+- Subtitle support in web playback works best with matching text subtitle files such as `.srt` or `.vtt`
 
 ---
 

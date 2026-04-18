@@ -1,6 +1,6 @@
 import customtkinter as ctk
 import os, re, subprocess, sys, random, webbrowser
-from PIL import Image
+from PIL import Image, ImageSequence
 from tkinter import filedialog, messagebox, simpledialog
 import tkinter as tk
 from functools import partial
@@ -603,7 +603,7 @@ class EditDialog(ctk.CTkToplevel):
         super().__init__(master)
         self.title("Edit Movie")
         self.geometry("600x520")
-        self.resizable(False, False)
+        self.resizable(True, True)
         self.values = values.copy()
         self.saved = False
 
@@ -646,7 +646,20 @@ class EditDialog(ctk.CTkToplevel):
         self.e_over.insert("1.0", values.get("overview") or "")
 
         self.poster_path = values.get("poster_path")
+        self.animated_poster_path = values.get("animated_poster_path")
+
         self.poster_btn = ctk.CTkButton(grid, text="Choose Poster", command=self.choose_poster)
+        self.animated_poster_btn = ctk.CTkButton(
+            grid,
+            text="Choose Animated Poster",
+            command=self.choose_animated_poster
+        )
+        self.clear_animated_btn = ctk.CTkButton(
+            grid,
+            text="Clear Animated Poster",
+            command=self.clear_animated_poster
+        )
+
         self.fetch_btn = ctk.CTkButton(grid, text="Fetch Metadata (Wikipedia)", command=self.fetch_from_wiki)
 
         row("Title", self.e_title)
@@ -657,6 +670,8 @@ class EditDialog(ctk.CTkToplevel):
         row("File path", self.file_row)
         row("Overview", self.e_over)
         row("Poster", self.poster_btn)
+        row("Animated Poster", self.animated_poster_btn)
+        row("Clear Animated", self.clear_animated_btn)
         row("Fetch (Wiki)", self.fetch_btn)
 
         grid.columnconfigure(1, weight=1)
@@ -772,6 +787,45 @@ class EditDialog(ctk.CTkToplevel):
         except Exception as e:
             messagebox.showerror("Poster error", str(e))
 
+    def choose_animated_poster(self):
+        path = filedialog.askopenfilename(
+            title="Pick animated poster",
+            filetypes=[
+                ("Animated media", "*.gif *.webp *.mp4 *.webm *.m4v"),
+                ("GIF files", "*.gif"),
+                ("WebP files", "*.webp"),
+                ("MP4 files", "*.mp4"),
+                ("WebM files", "*.webm"),
+                ("All files", "*.*"),
+            ]
+        )
+        if not path:
+            return
+
+        src = Path(path)
+
+        try:
+            if src.resolve().parent == POSTERS.resolve():
+                self.animated_poster_path = str(src.resolve())
+                return
+        except Exception:
+            pass
+
+        title_for_name = (self.e_title.get() or src.stem or "animated_poster").strip()
+        safe = re.sub(r"[^A-Za-z0-9_-]+", "_", title_for_name)[:64]
+        ext = src.suffix.lower() or ".mp4"
+        dest = POSTERS / f"{safe}_animated{ext}"
+
+        try:
+            dest.write_bytes(src.read_bytes())
+            self.animated_poster_path = str(dest)
+        except Exception as e:
+            messagebox.showerror("Animated poster error", str(e))
+
+
+    def clear_animated_poster(self):
+        self.animated_poster_path = None
+        messagebox.showinfo("Animated Poster", "Animated poster cleared for this item. Click Save to apply.")
 
     def fetch_from_wiki(self):
         title = (self.e_title.get() or "").strip()
@@ -833,7 +887,8 @@ class EditDialog(ctk.CTkToplevel):
             "resolution": (self.e_res.get() or "").strip(),
             "file_path": (self.e_file.get() or "").strip(),
             "overview": (self.e_over.get("1.0","end") or "").strip(),
-            "poster_path": self.poster_path
+            "poster_path": self.poster_path,
+            "animated_poster_path": self.animated_poster_path,
         })
         if not self.values["title"]:
             messagebox.showwarning("Missing title", "Title is required")
@@ -1075,6 +1130,10 @@ class MovieApp(ctk.CTk):
         self._poster_image = self._blank_img
         self.poster_label.configure(image=self._blank_img, text="")
 
+        self._poster_anim_frames = []
+        self._poster_anim_index = 0
+        self._poster_anim_job = None
+        self._poster_anim_source = None
 
         # description frame + scrollbar
         desc_frame = ctk.CTkFrame(right)
@@ -1927,6 +1986,7 @@ class MovieApp(ctk.CTk):
             "genres": meta.get("genres") or "",
             "overview": shorten_overview(meta.get("overview") or "", max_sentences=3, max_chars=900),
             "poster_path": meta.get("poster_path"),
+            "animated_poster_path": None,
             "file_path": None,
             "runtime_minutes": meta.get("runtime_minutes"),
             "resolution": None,
@@ -2038,23 +2098,49 @@ class MovieApp(ctk.CTk):
             self._ph_img = ctk.CTkImage(light_image=ph, dark_image=ph, size=(150, 225))
         return self._ph_img
 
-    def _load_tile_image(self, poster_path: str | None, max_w=150, max_h=225):
-        # cache CTkImage by file path + target size to avoid GC and speed up
+    def _load_tile_image(
+        self,
+        poster_path: str | None,
+        animated_poster_path: str | None = None,
+        max_w=150,
+        max_h=225
+    ):
         if not hasattr(self, "_tile_img_cache"):
             self._tile_img_cache = {}
-        key = (poster_path or "__none__", max_w, max_h)
+
+        key = (
+            poster_path or "__none__",
+            animated_poster_path or "__none__",
+            max_w,
+            max_h
+        )
         if key in self._tile_img_cache:
             return self._tile_img_cache[key]
+
         try:
-            poster_path = resolve_existing_path(poster_path)
-            if poster_path and os.path.exists(poster_path):
-                img = Image.open(poster_path).convert("RGBA")
+            resolved_poster = resolve_existing_path(poster_path)
+            resolved_animated = resolve_existing_path(animated_poster_path)
+
+            preview_path = None
+
+            if resolved_animated and os.path.exists(resolved_animated):
+                ext = Path(resolved_animated).suffix.lower()
+                if ext in [".gif", ".webp", ".png", ".jpg", ".jpeg", ".bmp"]:
+                    preview_path = resolved_animated
+
+            if (not preview_path) and resolved_poster and os.path.exists(resolved_poster):
+                preview_path = resolved_poster
+
+            if preview_path and os.path.exists(preview_path):
+                img = Image.open(preview_path).convert("RGBA").copy()
                 tw, th = self._fit_poster_size(*img.size, max_w=max_w, max_h=max_h)
                 ctki = ctk.CTkImage(light_image=img, dark_image=img, size=(tw, th))
             else:
                 ctki = self._ensure_placeholder()
+
         except Exception:
             ctki = self._ensure_placeholder()
+
         self._tile_img_cache[key] = ctki
         return ctki
 
@@ -2120,21 +2206,183 @@ class MovieApp(ctk.CTk):
         self.set_status("Back to Library.")
 
     def _clear_details(self):
+        self._stop_poster_animation()
+
         try:
             self.desc_box.configure(state="normal")
             self.desc_box.delete("1.0", "end")
             self.desc_box.configure(state="disabled")
         except Exception:
             pass
+
         try:
+            self._poster_image = self._blank_img
             self.poster_label.configure(image=self._blank_img, text="")
         except Exception:
             pass
+            
+    def _stop_poster_animation(self):
+        try:
+            if self._poster_anim_job is not None:
+                self.after_cancel(self._poster_anim_job)
+        except Exception:
+            pass
+
+        self._poster_anim_job = None
+        self._poster_anim_frames = []
+        self._poster_anim_index = 0
+        self._poster_anim_source = None
+
+
+    def _animate_poster_frame(self):
+        if not self._poster_anim_frames:
+            self._poster_anim_job = None
+            return
+
+        try:
+            frame = self._poster_anim_frames[self._poster_anim_index]
+            self._poster_image = frame
+            self.poster_label.configure(image=frame, text="")
+            self._poster_anim_index = (self._poster_anim_index + 1) % len(self._poster_anim_frames)
+            self._poster_anim_job = self.after(90, self._animate_poster_frame)
+        except Exception:
+            self._poster_anim_job = None
+
+
+    def _load_animated_poster_preview(self, animated_path: str, max_w=260, max_h=390) -> bool:
+        try:
+            ext = Path(animated_path).suffix.lower()
+            if ext not in [".gif", ".webp"]:
+                return False
+
+            img = Image.open(animated_path)
+
+            is_animated = getattr(img, "is_animated", False)
+            frame_count = getattr(img, "n_frames", 1)
+
+            if not is_animated or frame_count <= 1:
+                rgba = img.convert("RGBA").copy()
+                tw, th = self._fit_poster_size(*rgba.size, max_w=max_w, max_h=max_h)
+                self._poster_image = ctk.CTkImage(light_image=rgba, dark_image=rgba, size=(tw, th))
+                self.poster_label.configure(image=self._poster_image, text="")
+                return True
+
+            frames = []
+            target_size = None
+
+            for frame in ImageSequence.Iterator(img):
+                rgba = frame.convert("RGBA").copy()
+
+                if target_size is None:
+                    tw, th = self._fit_poster_size(*rgba.size, max_w=max_w, max_h=max_h)
+                    target_size = (tw, th)
+
+                frames.append(
+                    ctk.CTkImage(
+                        light_image=rgba,
+                        dark_image=rgba,
+                        size=target_size
+                    )
+                )
+
+            if not frames:
+                return False
+
+            self._poster_anim_frames = frames
+            self._poster_anim_index = 0
+            self._poster_anim_source = animated_path
+            self._poster_image = frames[0]
+            self.poster_label.configure(image=frames[0], text="")
+            self._poster_anim_job = self.after(90, self._animate_poster_frame)
+            return True
+
+        except Exception:
+            return False
+        
+    def _stop_poster_animation(self):
+        try:
+            if self._poster_anim_job is not None:
+                self.after_cancel(self._poster_anim_job)
+        except Exception:
+            pass
+
+        self._poster_anim_job = None
+        self._poster_anim_frames = []
+        self._poster_anim_index = 0
+        self._poster_anim_source = None
+
+
+    def _animate_poster_frame(self):
+        if not self._poster_anim_frames:
+            self._poster_anim_job = None
+            return
+
+        try:
+            frame = self._poster_anim_frames[self._poster_anim_index]
+            self._poster_image = frame
+            self.poster_label.configure(image=frame, text="")
+            self._poster_anim_index = (self._poster_anim_index + 1) % len(self._poster_anim_frames)
+            self._poster_anim_job = self.after(90, self._animate_poster_frame)
+        except Exception:
+            self._poster_anim_job = None
+
+
+    def _load_animated_poster_preview(self, animated_path: str, max_w=260, max_h=390) -> bool:
+        try:
+            ext = Path(animated_path).suffix.lower()
+            if ext not in [".gif", ".webp"]:
+                return False
+
+            img = Image.open(animated_path)
+
+            is_animated = getattr(img, "is_animated", False)
+            frame_count = getattr(img, "n_frames", 1)
+
+            if not is_animated or frame_count <= 1:
+                rgba = img.convert("RGBA").copy()
+                tw, th = self._fit_poster_size(*rgba.size, max_w=max_w, max_h=max_h)
+                self._poster_image = ctk.CTkImage(light_image=rgba, dark_image=rgba, size=(tw, th))
+                self.poster_label.configure(image=self._poster_image, text="")
+                return True
+
+            frames = []
+            target_size = None
+
+            for frame in ImageSequence.Iterator(img):
+                rgba = frame.convert("RGBA").copy()
+
+                if target_size is None:
+                    tw, th = self._fit_poster_size(*rgba.size, max_w=max_w, max_h=max_h)
+                    target_size = (tw, th)
+
+                frames.append(
+                    ctk.CTkImage(
+                        light_image=rgba,
+                        dark_image=rgba,
+                        size=target_size
+                    )
+                )
+
+            if not frames:
+                return False
+
+            self._poster_anim_frames = frames
+            self._poster_anim_index = 0
+            self._poster_anim_source = animated_path
+            self._poster_image = frames[0]
+            self.poster_label.configure(image=frames[0], text="")
+            self._poster_anim_job = self.after(90, self._animate_poster_frame)
+            return True
+
+        except Exception:
+            return False
 
     def _load_details(self, mid: int):
+        self._stop_poster_animation()
+
         con = db()
         row = con.execute(
-            """SELECT id,title,overview,poster_path,file_path,
+            """SELECT id,title,overview,poster_path,animated_poster_path,file_path,
                       runtime_minutes,resolution,genres,year
                FROM movies WHERE id=?""",
             (mid,)
@@ -2144,15 +2392,27 @@ class MovieApp(ctk.CTk):
             return
 
         self.selected_id = mid
-        title = row[1]; overview = row[2] or ""
-        fpath = row[4]; runm = row[5]; res = row[6]; genres = row[7]; year = row[8]
+        title = row[1]
+        overview = row[2] or ""
+        poster_path_raw = row[3]
+        animated_poster_path_raw = row[4]
+        fpath = row[5]
+        runm = row[6]
+        res = row[7]
+        genres = row[8]
+        year = row[9]
 
         extra = []
-        if runm:  extra.append(f"Runtime: {runm} min")
-        if res:   extra.append(f"Resolution: {res}")
-        if genres: extra.append(f"Genres: {genres}")
-        if year:  extra.append(f"Year: {year}")
-        if fpath: extra.append(f"File: {fpath}")
+        if runm:
+            extra.append(f"Runtime: {runm} min")
+        if res:
+            extra.append(f"Resolution: {res}")
+        if genres:
+            extra.append(f"Genres: {genres}")
+        if year:
+            extra.append(f"Year: {year}")
+        if fpath:
+            extra.append(f"File: {fpath}")
 
         info = ("\n".join(extra)).strip()
         text = f"{title}\n\n{overview}"
@@ -2165,8 +2425,15 @@ class MovieApp(ctk.CTk):
         self.desc_box.configure(state="disabled")
         self.desc_box.configure(cursor="arrow")
 
+        poster_path = resolve_existing_path(poster_path_raw)
+        animated_path = resolve_existing_path(animated_poster_path_raw)
 
-        poster_path = resolve_existing_path(row[3])
+        # Prefer animated poster preview first for GIF/WebP
+        if animated_path and os.path.exists(animated_path):
+            if self._load_animated_poster_preview(animated_path, max_w=260, max_h=390):
+                return
+
+        # Fallback to normal poster
         if poster_path and os.path.exists(poster_path):
             try:
                 img = Image.open(poster_path).convert("RGBA").copy()
@@ -2510,13 +2777,13 @@ class MovieApp(ctk.CTk):
         exts = {".mp4", ".mkv", ".avi", ".mov", ".m4v", ".wmv"}
         files = []
 
-        for fn in os.listdir(folder):
-            p = os.path.join(folder, fn)
-            if os.path.isfile(p) and os.path.splitext(fn)[1].lower() in exts:
-                files.append(p)
+        for root, _, filenames in os.walk(folder):
+            for fn in filenames:
+                if os.path.splitext(fn)[1].lower() in exts:
+                    files.append(os.path.join(root, fn))
 
         if not files:
-            messagebox.showinfo("Import", "No video files found in that folder.")
+            messagebox.showinfo("Import", "No video files found in that folder or its subfolders.")
             return
 
         imported = 0
@@ -2550,8 +2817,11 @@ class MovieApp(ctk.CTk):
         self.refresh_list()
         self.refresh_stats()
         self.set_status(f"Imported {imported} movies. Skipped {skipped}.")
-        messagebox.showinfo("Import done", f"Imported {imported} movies.\nSkipped {skipped}.")
-
+        messagebox.showinfo(
+            "Import done",
+            f"Imported {imported} movies from folder and subfolders.\nSkipped {skipped}."
+        )
+        
     def import_encoded_tv_folder(self):
         folder = filedialog.askdirectory(title="Select encoded TV folder")
         if not folder:
@@ -2559,18 +2829,19 @@ class MovieApp(ctk.CTk):
 
         exts = {".mp4", ".mkv", ".avi", ".mov", ".m4v", ".wmv"}
         files = []
-        for fn in os.listdir(folder):
-            p = os.path.join(folder, fn)
-            if os.path.isfile(p) and os.path.splitext(fn)[1].lower() in exts:
-                files.append(p)
+
+        for root, _, filenames in os.walk(folder):
+            for fn in filenames:
+                if os.path.splitext(fn)[1].lower() in exts:
+                    files.append(os.path.join(root, fn))
 
         if not files:
-            messagebox.showinfo("Import", "No video files found in that folder.")
+            messagebox.showinfo("Import", "No video files found in that folder or its subfolders.")
             return
 
         imported = 0
         skipped = 0
-        show_ids = {}  # cache show_title -> show_id
+        show_ids = {}
 
         for path in sorted(files, key=lambda x: os.path.basename(x).lower()):
             parsed = parse_encoded_episode_filename(path)
@@ -2580,7 +2851,6 @@ class MovieApp(ctk.CTk):
 
             show_title, season, episode, ep_title = parsed
 
-            # create/find show row once
             if show_title not in show_ids:
                 show_id = ensure_show_row(show_title)
                 if not show_id:
@@ -2593,7 +2863,7 @@ class MovieApp(ctk.CTk):
             minutes, res = ffprobe_info(path)
 
             values = {
-                "title": ep_title,   # ✅ use filename episode title
+                "title": ep_title,
                 "year": None,
                 "genres": "",
                 "overview": "",
@@ -2602,19 +2872,24 @@ class MovieApp(ctk.CTk):
                 "runtime_minutes": minutes,
                 "resolution": res,
                 "media_type": "episode",
-                "show_id": int(show_id),
-                "season": int(season),
-                "episode": int(episode),
+                "show_id": show_id,
+                "season": season,
+                "episode": episode,
             }
 
-            upsert_movie(values)
-            imported += 1
+            try:
+                upsert_movie(values)
+                imported += 1
+            except Exception:
+                skipped += 1
 
         self.refresh_list()
         self.refresh_stats()
         self.set_status(f"Imported {imported} episodes. Skipped {skipped}.")
-        messagebox.showinfo("Import done", f"Imported {imported} episodes.\nSkipped {skipped}.")
-
+        messagebox.showinfo(
+            "Import done",
+            f"Imported {imported} episodes from folder and subfolders.\nSkipped {skipped}."
+        )
 
     def select_movie(self, event=None):
         try:
@@ -2871,7 +3146,7 @@ class MovieApp(ctk.CTk):
 
         con = db()
         row = con.execute("""
-            SELECT title,year,genres,overview,poster_path,
+            SELECT title,year,genres,overview,poster_path,animated_poster_path,
                    file_path,runtime_minutes,resolution,
                    media_type,show_id,season,episode
             FROM movies WHERE id=?
@@ -2884,13 +3159,14 @@ class MovieApp(ctk.CTk):
             "genres": row[2],
             "overview": row[3],
             "poster_path": row[4],
-            "file_path": row[5],
-            "runtime_minutes": row[6],
-            "resolution": row[7],
-            "media_type": row[8],
-            "show_id": row[9],
-            "season": row[10],
-            "episode": row[11],
+            "animated_poster_path": row[5],
+            "file_path": row[6],
+            "runtime_minutes": row[7],
+            "resolution": row[8],
+            "media_type": row[9],
+            "show_id": row[10],
+            "season": row[11],
+            "episode": row[12],
         }
 
         dlg = EditDialog(self, values)
@@ -3078,7 +3354,11 @@ class MovieApp(ctk.CTk):
             r = idx // COLS
             c = idx % COLS
 
-            img = self._load_tile_image(poster_path, max_w=TILE_W, max_h=TILE_H)
+            img = self._load_tile_image(
+                item.get("poster_path"),
+                item.get("animated_poster_path"),
+                max_w=TILE_W, max_h=TILE_H
+            )
 
             TEXT_H = 44
             OUTER_W = TILE_W + 14

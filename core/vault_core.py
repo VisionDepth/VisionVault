@@ -91,6 +91,19 @@ def save_settings(data: dict) -> None:
 
 # -------------------- DB helpers --------------------
 
+def touch_last_watched(item_id: int):
+    con = db()
+    con.execute(
+        """
+        UPDATE movies
+        SET last_watched_at = CURRENT_TIMESTAMP
+        WHERE id=?
+        """,
+        (item_id,)
+    )
+    con.commit()
+    con.close()
+
 def get_resume_position(item_id: int) -> float:
     con = db()
     row = con.execute(
@@ -163,12 +176,15 @@ def init_db():
         ("runtime_minutes", "INTEGER"),
         ("resolution", "TEXT"),
         ("tmdb_id", "INTEGER"),
+        ("tmdb_id", "INTEGER"),
         ("media_type", "TEXT DEFAULT 'movie'"),
         ("show_id", "INTEGER"),
         ("season", "INTEGER"),
         ("episode", "INTEGER"),
         ("resume_seconds", "REAL DEFAULT 0"),
         ("last_position_seconds", "REAL DEFAULT 0"),
+        ("animated_poster_path", "TEXT"),
+        ("last_watched_at", "TEXT"),
     ]:
         try:
             con.execute(f"ALTER TABLE movies ADD COLUMN {col_def[0]} {col_def[1]}")
@@ -202,12 +218,19 @@ def delete_movie(movie_id: int):
     con.close()
 
 
-def increment_watch(movie_id: int):
+def increment_watch(item_id: int):
     con = db()
-    con.execute("UPDATE movies SET watch_count = watch_count + 1 WHERE id=?", (movie_id,))
+    con.execute(
+        """
+        UPDATE movies
+        SET watch_count = COALESCE(watch_count, 0) + 1,
+            last_watched_at = CURRENT_TIMESTAMP
+        WHERE id=?
+        """,
+        (item_id,)
+    )
     con.commit()
     con.close()
-
 
 def upsert_movie(values: dict) -> int:
     con = db()
@@ -240,6 +263,7 @@ def upsert_movie(values: dict) -> int:
                    genres=?,
                    overview=?,
                    poster_path=?,
+                   animated_poster_path=?,
                    file_path=?,
                    runtime_minutes=?,
                    resolution=?,
@@ -254,6 +278,7 @@ def upsert_movie(values: dict) -> int:
                 values.get("genres"),
                 values.get("overview"),
                 values.get("poster_path"),
+                values.get("animated_poster_path"),
                 values.get("file_path"),
                 values.get("runtime_minutes"),
                 values.get("resolution"),
@@ -267,16 +292,17 @@ def upsert_movie(values: dict) -> int:
     else:
         cur.execute(
             """INSERT INTO movies
-               (title, year, genres, overview, poster_path,
+               (title, year, genres, overview, poster_path, animated_poster_path,
                 file_path, runtime_minutes, resolution,
                 media_type, show_id, season, episode)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 values.get("title"),
                 values.get("year"),
                 values.get("genres"),
                 values.get("overview"),
                 values.get("poster_path"),
+                values.get("animated_poster_path"),
                 values.get("file_path"),
                 values.get("runtime_minutes"),
                 values.get("resolution"),
@@ -297,8 +323,8 @@ def upsert_movie(values: dict) -> int:
 def get_item(movie_id: int) -> Optional[dict]:
     con = db()
     row = con.execute("""
-        SELECT id, title, year, genres, overview, poster_path, watch_count,
-               added_at, file_path, runtime_minutes, resolution,
+        SELECT id, title, year, genres, overview, poster_path, animated_poster_path, watch_count,
+               added_at, last_watched_at, file_path, runtime_minutes, resolution,
                media_type, show_id, season, episode,
                resume_seconds, last_position_seconds
         FROM movies
@@ -333,8 +359,8 @@ def list_movies(
     con = db()
 
     base = """
-        SELECT id, title, year, watch_count, genres, file_path,
-               media_type, show_id, season, episode, poster_path
+        SELECT id, title, year, watch_count, last_watched_at, genres, file_path,
+               media_type, show_id, season, episode, poster_path, animated_poster_path
         FROM movies
     """
     clauses = []
