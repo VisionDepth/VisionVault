@@ -1,18 +1,34 @@
 from pathlib import Path
 from datetime import datetime
-
-from flask import Flask, abort, jsonify, redirect, render_template_string, request, send_file, url_for, Response, stream_with_context
+import json
 import mimetypes
 import os
-
 import sys
 import threading
+
+from flask import (
+    Flask, abort, jsonify, redirect, render_template_string,
+    request, send_file, url_for, Response, stream_with_context,
+    make_response
+)
 from werkzeug.serving import make_server
 
 def bundle_base() -> Path:
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS)
     return Path(__file__).resolve().parent
+
+def brand_logo_path() -> Path | None:
+    candidates = [
+        bundle_base() / "visionvault_logo.png",
+        bundle_base() / "logo.png",
+        bundle_base().parent / "visionvault_logo.png",
+        bundle_base().parent / "logo.png",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
 
 from core.vault_core import (
     POSTERS,
@@ -28,9 +44,114 @@ from core.vault_core import (
     get_resume_position,
     save_resume_position,
     clear_resume_position,
+    touch_last_watched,
 )
 
 app = Flask(__name__)
+
+def api_base_url() -> str:
+    return request.host_url.rstrip("/")
+
+
+def absolute_url(path: str) -> str:
+    return f"{api_base_url()}{path}"
+
+
+def can_play_item(item: dict) -> bool:
+    if not item:
+        return False
+    if item.get("media_type") == "show":
+        return False
+    file_path = resolve_existing_path(item.get("file_path"))
+    return bool(file_path and Path(file_path).exists())
+
+
+def serialize_item(item: dict) -> dict:
+    if not item:
+        return {}
+
+    item_id = int(item["id"])
+    media_type = item.get("media_type") or "movie"
+    poster_url = absolute_url(url_for("poster_for_item", item_id=item_id))
+    animated_poster_url = absolute_url(url_for("animated_poster_for_item", item_id=item_id))
+    detail_url = absolute_url(url_for("api_item", item_id=item_id))
+
+    out = {
+        "id": item_id,
+        "title": item.get("title"),
+        "year": item.get("year"),
+        "genres": item.get("genres") or "",
+        "overview": item.get("overview") or "",
+        "poster_url": poster_url,
+        "animated_poster_url": animated_poster_url,
+        "watch_count": int(item.get("watch_count") or 0),
+        "runtime_minutes": item.get("runtime_minutes"),
+        "resolution": item.get("resolution"),
+        "media_type": media_type,
+        "show_id": item.get("show_id"),
+        "season": item.get("season"),
+        "episode": item.get("episode"),
+        "resume_seconds": float(item.get("resume_seconds") or 0),
+        "last_watched_at": item.get("last_watched_at"),
+        "detail_url": detail_url,
+        "can_play": can_play_item(item),
+    }
+
+    if out["can_play"]:
+        out["stream_url"] = absolute_url(url_for("stream_item", item_id=item_id))
+    else:
+        out["stream_url"] = None
+
+    if media_type == "show":
+        watched, total = get_show_progress(item_id)
+        out["episode_progress"] = {
+            "watched": int(watched),
+            "total": int(total),
+        }
+
+    return out
+
+
+def serialize_items(items: list[dict]) -> list[dict]:
+    return [serialize_item(item) for item in items]
+
+
+def continue_watching_items() -> list[dict]:
+    items = list_movies(sort_key="title_asc", nav_mode="root")
+    out = []
+
+    for item in items:
+        full = get_item(int(item["id"])) or item
+        if full.get("media_type") == "show":
+            continue
+
+        resume = float(full.get("resume_seconds") or 0)
+        if resume > 5:
+            out.append(full)
+
+    out.sort(key=lambda x: float(x.get("resume_seconds") or 0), reverse=True)
+    return out[:20]
+
+def has_animated_poster(item: dict) -> bool:
+    if not item:
+        return False
+    animated_path = resolve_existing_path(item.get("animated_poster_path"))
+    return bool(animated_path and Path(animated_path).exists())
+
+
+def animated_media_ext(item: dict) -> str:
+    animated_path = resolve_existing_path((item or {}).get("animated_poster_path"))
+    if not animated_path:
+        return ""
+    return Path(animated_path).suffix.lower()
+
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return response
 
 
 PAGE_TEMPLATE = """
@@ -117,13 +238,28 @@ PAGE_TEMPLATE = """
             flex-wrap: wrap;
         }
 
-        .brand h1 {
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-logo {
+            width: 110px;
+            height: 110px;
+            object-fit: contain;
+            display: block;
+            flex: 0 0 auto;
+            filter: drop-shadow(0 0 16px rgba(77, 182, 255, 0.22));
+        }
+
+        .brand-copy h1 {
             margin: 0;
             font-size: 56px;
             letter-spacing: -1.6px;
         }
 
-        .brand p {
+        .brand-copy p {
             margin: 8px 0 0 0;
             color: var(--muted);
             font-size: 18px;
@@ -587,7 +723,7 @@ PAGE_TEMPLATE = """
                 font-size: 44px;
             }
 
-            .brand h1 {
+            .brand-copy h1 {
                 font-size: 42px;
             }
         }
@@ -639,11 +775,70 @@ PAGE_TEMPLATE = """
             const data = HERO_DATA[itemId];
 
             if (byId("hero-bg")) {
-                byId("hero-bg").style.backgroundImage = `url("${data.poster_url}")`;
+                const bgUrl = data.animated_poster_url || data.poster_url || "";
+                byId("hero-bg").style.backgroundImage = bgUrl ? `url("${bgUrl}")` : "";
             }
-            if (byId("hero-poster-img")) {
-                byId("hero-poster-img").src = data.poster_url;
+
+            const heroPosterImg = byId("hero-poster-img");
+            const existingAnimatedImg = byId("hero-poster-animated");
+            const existingVideo = byId("hero-poster-video");
+
+            if (existingAnimatedImg) {
+                existingAnimatedImg.remove();
             }
+            if (existingVideo) {
+                try {
+                    existingVideo.pause();
+                } catch (err) {}
+                existingVideo.remove();
+            }
+
+            if (heroPosterImg) {
+                heroPosterImg.src = data.poster_url || "";
+                heroPosterImg.style.display = "block";
+            }
+
+            if (data.animated_poster_url) {
+                if (data.animated_poster_ext === ".mp4" || data.animated_poster_ext === ".webm" || data.animated_poster_ext === ".m4v") {
+                    const video = document.createElement("video");
+                    video.id = "hero-poster-video";
+                    video.autoplay = true;
+                    video.muted = true;
+                    video.loop = true;
+                    video.playsInline = true;
+                    video.style.width = "100%";
+                    video.style.height = "100%";
+                    video.style.objectFit = "cover";
+                    video.style.display = "block";
+
+                    const source = document.createElement("source");
+                    source.src = data.animated_poster_url;
+                    source.type = data.animated_poster_ext === ".webm" ? "video/webm" : "video/mp4";
+                    video.appendChild(source);
+
+                    const heroPoster = document.querySelector(".hero-poster");
+                    if (heroPoster) {
+                        heroPoster.appendChild(video);
+                        if (heroPosterImg) heroPosterImg.style.display = "none";
+                    }
+                } else {
+                    const animImg = document.createElement("img");
+                    animImg.id = "hero-poster-animated";
+                    animImg.src = data.animated_poster_url;
+                    animImg.alt = "";
+                    animImg.style.width = "100%";
+                    animImg.style.height = "100%";
+                    animImg.style.objectFit = "cover";
+                    animImg.style.display = "block";
+
+                    const heroPoster = document.querySelector(".hero-poster");
+                    if (heroPoster) {
+                        heroPoster.appendChild(animImg);
+                        if (heroPosterImg) heroPosterImg.style.display = "none";
+                    }
+                }
+            }
+            
             if (byId("hero-type")) {
                 byId("hero-type").textContent = data.type_label;
             }
@@ -938,7 +1133,6 @@ def truncate(text: str | None, max_len: int = 260) -> str:
 def poster_url_for(item_id: int) -> str:
     return url_for("poster_for_item", item_id=item_id)
 
-
 def build_hero_entry(item: dict) -> dict:
     item_id = item["id"]
     media_type = item.get("media_type") or "movie"
@@ -950,7 +1144,7 @@ def build_hero_entry(item: dict) -> dict:
             f"{watched}/{total} watched"
         ]
         type_label = "Series"
-        can_play = False
+        play_url = "#"
     else:
         meta_parts = [
             str(item.get("year") or "Unknown year"),
@@ -961,23 +1155,31 @@ def build_hero_entry(item: dict) -> dict:
         if item.get("resolution"):
             meta_parts.append(str(item["resolution"]))
         type_label = "Movie" if media_type == "movie" else "Episode"
-        can_play = True
+        play_url = url_for("player_page", item_id=item_id)
 
     if item.get("genres"):
         meta_parts.append(str(item["genres"]))
 
+    animated_url = absolute_url(url_for("animated_poster_for_item", item_id=item_id)) if has_animated_poster(item) else ""
+    animated_ext = animated_media_ext(item)
+    poster_url = absolute_url(url_for("poster_for_item", item_id=item_id))
+
+    preferred_visual_url = animated_url if animated_url else poster_url
+
     return {
-        "title": item.get("title") or "Unknown",
-        "overview": truncate(item.get("overview")),
-        "meta_line": " • ".join(meta_parts),
+        "title": item.get("title") or "Untitled",
+        "overview": item.get("overview") or "No overview yet.",
+        "meta_line": " • ".join(meta_parts) if meta_parts else type_label,
         "type_label": type_label,
-        "poster_url": poster_url_for(item_id),
+        "poster_url": poster_url,
+        "animated_poster_url": animated_url,
+        "animated_poster_ext": animated_ext,
+        "preferred_visual_url": preferred_visual_url,
         "detail_url": url_for("item_page", item_id=item_id),
-        "play_url": url_for("player_page", item_id=item_id),
-        "can_play": can_play,
+        "play_url": play_url,
+        "can_play": can_play_item(item),
     }
-
-
+    
 def enrich_items(items: list[dict]) -> list[dict]:
     enriched = []
     for item in items:
@@ -1065,6 +1267,113 @@ def iter_file_chunks(path: str, start: int, end: int, chunk_size: int = 1024 * 1
 def guess_mime_type(path: str) -> str:
     mime, _ = mimetypes.guess_type(path)
     return mime or "application/octet-stream"
+    
+def find_subtitle_file_for_video(video_path: str) -> str | None:
+    if not video_path:
+        return None
+
+    p = Path(video_path)
+    if not p.exists():
+        return None
+
+    movie_folder = p.parent
+    movie_named_folder = movie_folder / p.stem
+    parent_folder = movie_folder.parent if movie_folder.parent != movie_folder else None
+
+    search_dirs = [
+        movie_folder,
+        movie_folder / "Subtitles",
+        movie_folder / "subtitles",
+        movie_named_folder,
+        movie_named_folder / "Subtitles",
+        movie_named_folder / "subtitles",
+    ]
+
+    if parent_folder:
+        search_dirs.extend([
+            parent_folder / "Subtitles",
+            parent_folder / "subtitles",
+        ])
+
+    candidate_names = []
+
+    for ext in [".vtt", ".srt"]:
+        candidate_names.append(f"{p.stem}{ext}")
+
+    for ext in [".vtt", ".srt"]:
+        candidate_names.append(f"{p.stem}.en{ext}")
+        candidate_names.append(f"{p.stem}.eng{ext}")
+        candidate_names.append(f"{p.stem}.english{ext}")
+
+    seen = set()
+
+    for folder in search_dirs:
+        try:
+            folder_key = str(folder.resolve())
+        except Exception:
+            folder_key = str(folder)
+
+        if folder_key in seen:
+            continue
+        seen.add(folder_key)
+
+        if not folder.exists():
+            continue
+
+        for name in candidate_names:
+            candidate = folder / name
+            if candidate.exists():
+                return str(candidate)
+
+    return None
+
+
+def srt_to_vtt_text(srt_text: str) -> str:
+    text = (srt_text or "").replace("\r\n", "\n").replace("\r", "\n")
+
+    lines = text.split("\n")
+    out_lines = ["WEBVTT", ""]
+
+    for line in lines:
+        if "-->" in line:
+            line = line.replace(",", ".")
+        out_lines.append(line)
+
+    return "\n".join(out_lines)
+    
+def build_stream_response(file_path: str):
+    file_size = os.path.getsize(file_path)
+    mime_type = guess_mime_type(file_path)
+    range_header = request.headers.get("Range", None)
+
+    if range_header:
+        parsed = parse_range_header(range_header, file_size)
+        if not parsed:
+            return Response(status=416)
+
+        start, end = parsed
+        content_length = end - start + 1
+
+        response = Response(
+            stream_with_context(iter_file_chunks(file_path, start, end)),
+            status=206,
+            mimetype=mime_type,
+            direct_passthrough=True,
+        )
+        response.headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+        response.headers["Accept-Ranges"] = "bytes"
+        response.headers["Content-Length"] = str(content_length)
+        return response
+
+    response = Response(
+        stream_with_context(iter_file_chunks(file_path, 0, file_size - 1)),
+        status=200,
+        mimetype=mime_type,
+        direct_passthrough=True,
+    )
+    response.headers["Content-Length"] = str(file_size)
+    response.headers["Accept-Ranges"] = "bytes"
+    return response
 
 @app.route("/")
 def index():
@@ -1104,22 +1413,28 @@ def index():
         "meta_line": "Local library • TV mode",
         "type_label": "Library",
         "poster_url": "",
+        "animated_poster_url": "",
+        "animated_poster_ext": "",
+        "preferred_visual_url": "",
         "detail_url": "#",
         "play_url": "#",
         "can_play": False,
     }
-
+    
     body = render_template_string(
         """
         <section class="hero">
             <div class="hero-bg" id="hero-bg"
-                 {% if default_hero.poster_url %}style='background-image:url("{{ default_hero.poster_url }}")'{% endif %}></div>
+                 {% if default_hero.preferred_visual_url %}style='background-image:url("{{ default_hero.preferred_visual_url }}")'{% endif %}></div>
             <div class="hero-overlay"></div>
 
             <div class="topbar">
                 <div class="brand">
-                    <h1>VisionVault TV</h1>
-                    <p>Local movie and show library built for your TV</p>
+                    <img class="brand-logo" src="{{ url_for('brand_logo') }}" alt="VisionVault logo">
+                    <div class="brand-copy">
+                        <h1>VisionVault TV</h1>
+                        <p>Local movie and show library built for your TV</p>
+                    </div>
                 </div>
 
                 <div class="top-actions">
@@ -1139,7 +1454,24 @@ def index():
                 <div class="hero-poster">
                     <img id="hero-poster-img"
                          src="{{ default_hero.poster_url if default_hero.poster_url else '' }}"
-                         alt="">
+                         alt=""
+                         {% if default_hero.animated_poster_url %}style="display:none"{% endif %}>
+
+                    {% if default_hero.animated_poster_url and default_hero.animated_poster_ext in ['.mp4', '.webm', '.m4v'] %}
+                    <video id="hero-poster-video"
+                           autoplay
+                           muted
+                           loop
+                           playsinline
+                           style="width:100%;height:100%;object-fit:cover;display:block;">
+                        <source src="{{ default_hero.animated_poster_url }}" type="{{ 'video/webm' if default_hero.animated_poster_ext == '.webm' else 'video/mp4' }}">
+                    </video>
+                    {% elif default_hero.animated_poster_url %}
+                    <img id="hero-poster-animated"
+                         src="{{ default_hero.animated_poster_url }}"
+                         alt=""
+                         style="width:100%;height:100%;object-fit:cover;display:block;">
+                    {% endif %}
                 </div>
 
                 <div class="hero-copy">
@@ -1510,6 +1842,9 @@ def stats_page():
 
     return render_page("VisionVault Stats", body, hero_data={})
 
+def empty_options_response():
+    response = make_response("", 204)
+    return response
 
 @app.route("/watch/<int:item_id>")
 def watch_route(item_id: int):
@@ -1538,6 +1873,13 @@ def clear_progress_route(item_id: int):
     increment_watch(item_id)
     return jsonify({"ok": True})
 
+@app.route("/brand-logo")
+def brand_logo():
+    logo_path = brand_logo_path()
+    if not logo_path:
+        abort(404)
+    return send_file(logo_path)
+
 @app.route("/api/progress/<int:item_id>", methods=["POST"])
 def save_progress_route(item_id: int):
     item = get_item(item_id)
@@ -1554,6 +1896,10 @@ def save_progress_route(item_id: int):
         seconds = 0
 
     save_resume_position(item_id, seconds)
+
+    if seconds > 5:
+        touch_last_watched(item_id)
+
     return jsonify({"ok": True, "seconds": seconds})
 
 @app.route("/play/<int:item_id>")
@@ -1562,6 +1908,41 @@ def play_route(item_id: int):
     if ok:
         return redirect(url_for("item_page", item_id=item_id))
     return f"<h1>Playback error</h1><p>{msg}</p><p><a href='{url_for('item_page', item_id=item_id)}'>Back</a></p>", 400
+
+@app.route("/subtitles/<int:item_id>")
+def subtitles_route(item_id: int):
+    item, file_path = get_streamable_file(item_id)
+    if not item:
+        abort(404)
+
+    if not file_path:
+        return ("", 404)
+
+    subtitle_path = find_subtitle_file_for_video(file_path)
+    if not subtitle_path:
+        return ("", 404)
+
+    ext = Path(subtitle_path).suffix.lower()
+
+    try:
+        if ext == ".vtt":
+            return send_file(
+                subtitle_path,
+                mimetype="text/vtt",
+                as_attachment=False
+            )
+
+        if ext == ".srt":
+            with open(subtitle_path, "r", encoding="utf-8-sig", errors="replace") as f:
+                srt_text = f.read()
+
+            vtt_text = srt_to_vtt_text(srt_text)
+            return Response(vtt_text, mimetype="text/vtt")
+
+    except Exception:
+        return ("", 500)
+
+    return ("", 404)
 
 @app.route("/stream/<int:item_id>")
 def stream_route(item_id: int):
@@ -1572,38 +1953,7 @@ def stream_route(item_id: int):
     if not file_path:
         return "No playable file found for this item.", 404
 
-    file_size = os.path.getsize(file_path)
-    mime_type = guess_mime_type(file_path)
-    range_header = request.headers.get("Range", None)
-
-    if range_header:
-        parsed = parse_range_header(range_header, file_size)
-        if not parsed:
-            return Response(status=416)
-
-        start, end = parsed
-        content_length = end - start + 1
-
-        response = Response(
-            stream_with_context(iter_file_chunks(file_path, start, end)),
-            status=206,
-            mimetype=mime_type,
-            direct_passthrough=True,
-        )
-        response.headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
-        response.headers["Accept-Ranges"] = "bytes"
-        response.headers["Content-Length"] = str(content_length)
-        return response
-
-    response = Response(
-        stream_with_context(iter_file_chunks(file_path, 0, file_size - 1)),
-        status=200,
-        mimetype=mime_type,
-        direct_passthrough=True,
-    )
-    response.headers["Content-Length"] = str(file_size)
-    response.headers["Accept-Ranges"] = "bytes"
-    return response
+    return build_stream_response(file_path)
 
 @app.route("/player/<int:item_id>")
 def player_page(item_id: int):
@@ -1616,6 +1966,9 @@ def player_page(item_id: int):
 
     hero_data = {}
     resume_seconds = int(get_resume_position(item_id) or 0)
+
+    subtitle_path = find_subtitle_file_for_video(file_path)
+    has_subtitles = bool(subtitle_path)
 
     body = render_template_string(
         """
@@ -1634,6 +1987,14 @@ def player_page(item_id: int):
                     data-tv-focus="1"
                     data-autofocus="1">
                     <source src="{{ url_for('stream_route', item_id=item['id']) }}" type="{{ mime_type }}">
+                    {% if has_subtitles %}
+                    <track
+                        kind="subtitles"
+                        src="{{ url_for('subtitles_route', item_id=item['id']) }}"
+                        srclang="en"
+                        label="English"
+                        default>
+                    {% endif %}
                     Your browser does not support video playback.
                 </video>
             </div>
@@ -1734,6 +2095,17 @@ def player_page(item_id: int):
 
                 if (e.key === "Escape" || e.key === "Backspace") {
                     e.preventDefault();
+
+                    try {
+                        player.pause();
+                        player.removeAttribute("src");
+                        const source = player.querySelector("source");
+                        if (source) source.removeAttribute("src");
+                        player.load();
+                    } catch (err) {
+                        console.log("Player cleanup failed:", err);
+                    }
+
                     window.location.href = "{{ url_for('item_page', item_id=item['id']) }}";
                 }
             });
@@ -1742,6 +2114,7 @@ def player_page(item_id: int):
         item=item,
         mime_type=guess_mime_type(file_path),
         resume_seconds=resume_seconds,
+        has_subtitles=has_subtitles,
     )
 
     return render_page(f"Playing {item['title']}", body, hero_data=hero_data)
@@ -1751,6 +2124,12 @@ def poster_for_item(item_id: int):
     item = get_item(item_id)
     if not item:
         abort(404)
+
+    animated_path = resolve_existing_path(item.get("animated_poster_path"))
+    if animated_path and Path(animated_path).exists():
+        ext = Path(animated_path).suffix.lower()
+        if ext in [".gif", ".webp", ".png", ".jpg", ".jpeg"]:
+            return send_file(animated_path)
 
     poster_path = resolve_existing_path(item.get("poster_path"))
     if poster_path and Path(poster_path).exists():
@@ -1766,6 +2145,18 @@ def poster_for_item(item_id: int):
 
     return send_file(fallback)
 
+@app.route("/animated_poster/<int:item_id>")
+def animated_poster_for_item(item_id: int):
+    item = get_item(item_id)
+    if not item:
+        abort(404)
+
+    animated_path = resolve_existing_path(item.get("animated_poster_path"))
+    if not animated_path or not Path(animated_path).exists():
+        return ("", 404)
+
+    return send_file(animated_path)
+
 @app.route("/restart/<int:item_id>")
 def restart_route(item_id: int):
     clear_resume_position(item_id)
@@ -1773,8 +2164,10 @@ def restart_route(item_id: int):
 
 @app.route("/api/library")
 def api_library():
-    items = enrich_items(list_movies(sort_key="title_asc", nav_mode="root"))
-    return jsonify(items)
+    search_term = (request.args.get("q") or "").strip()
+    items = list_movies(sort_key="title_asc", nav_mode="root", search_term=search_term)
+    full_items = [(get_item(int(x["id"])) or x) for x in items]
+    return jsonify(serialize_items(full_items))
 
 
 @app.route("/api/item/<int:item_id>")
@@ -1782,9 +2175,90 @@ def api_item(item_id: int):
     item = get_item(item_id)
     if not item:
         return jsonify({"error": "not found"}), 404
-    return jsonify(item)
 
+    data = serialize_item(item)
 
+    if item.get("media_type") == "show":
+        episodes = list_show_episodes(item_id)
+        episodes_full = [(get_item(int(x["id"])) or x) for x in episodes]
+        data["episodes"] = serialize_items(episodes_full)
+    else:
+        data["episodes"] = []
+
+    return jsonify(data)
+
+@app.route("/api/health", methods=["GET"])
+def api_health():
+    return jsonify({
+        "ok": True,
+        "app": "VisionVault",
+        "server_time": datetime.utcnow().isoformat() + "Z"
+    })
+    
+@app.route("/api/home", methods=["GET"])
+def api_home():
+    root_items = list_movies(sort_key="title_asc", nav_mode="root")
+    root_items_full = [(get_item(int(x["id"])) or x) for x in root_items]
+
+    movies = [x for x in root_items_full if (x.get("media_type") or "movie") == "movie"]
+    shows = [x for x in root_items_full if x.get("media_type") == "show"]
+    continue_items = continue_watching_items()
+
+    return jsonify({
+        "continue_watching": serialize_items(continue_items),
+        "movies": serialize_items(movies),
+        "shows": serialize_items(shows),
+    })
+    
+@app.route("/api/movies", methods=["GET"])
+def api_movies():
+    items = list_movies(sort_key="title_asc", nav_mode="root")
+    full_items = [(get_item(int(x["id"])) or x) for x in items]
+    movies = [x for x in full_items if (x.get("media_type") or "movie") == "movie"]
+    return jsonify(serialize_items(movies))
+    
+@app.route("/api/shows", methods=["GET"])
+def api_shows():
+    items = list_movies(sort_key="title_asc", nav_mode="root")
+    full_items = [(get_item(int(x["id"])) or x) for x in items]
+    shows = [x for x in full_items if x.get("media_type") == "show"]
+    return jsonify(serialize_items(shows))    
+    
+@app.route("/api/show/<int:show_id>/episodes", methods=["GET"])
+def api_show_episodes(show_id: int):
+    show_item = get_item(show_id)
+    if not show_item or show_item.get("media_type") != "show":
+        return jsonify({"error": "show not found"}), 404
+
+    episodes = list_show_episodes(show_id)
+    episodes_full = [(get_item(int(x["id"])) or x) for x in episodes]
+    return jsonify(serialize_items(episodes_full))
+
+@app.route("/api/stats", methods=["GET"])
+def api_stats():
+    return jsonify(get_stats())
+
+@app.route("/api/resume/<int:item_id>", methods=["GET"])
+def api_resume(item_id: int):
+    item = get_item(item_id)
+    if not item:
+        return jsonify({"error": "not found"}), 404
+
+    return jsonify({
+        "item_id": item_id,
+        "resume_seconds": float(get_resume_position(item_id) or 0)
+    })
+
+@app.route("/api/stream/<int:item_id>", methods=["GET"])
+def stream_item(item_id: int):
+    item, file_path = get_streamable_file(item_id)
+    if not item:
+        abort(404)
+
+    if not file_path:
+        return jsonify({"error": "media file missing"}), 404
+
+    return build_stream_response(file_path)
 
 _server = None
 _server_thread = None
@@ -1797,7 +2271,7 @@ def start_tv_server_thread(host="0.0.0.0", port=5050):
         return True, f"TV server already running on {host}:{port}"
 
     try:
-        _server = make_server(host, port, app)
+        _server = make_server(host, port, app, threaded=True)
         _server_thread = threading.Thread(target=_server.serve_forever, daemon=True)
         _server_thread.start()
         return True, f"TV server started on {host}:{port}"
