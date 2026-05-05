@@ -602,7 +602,7 @@ class EditDialog(ctk.CTkToplevel):
     def __init__(self, master, values):
         super().__init__(master)
         self.title("Edit Movie")
-        self.geometry("600x520")
+        self.geometry("600x620")
         self.resizable(True, True)
         self.values = values.copy()
         self.saved = False
@@ -1306,13 +1306,35 @@ class MovieApp(ctk.CTk):
     # -------- helpers --------
 
     def start_tv_mode_ui(self):
-        ok, msg = start_tv_mode()
+        # Ask user which mode
+        choice = messagebox.askyesnocancel(
+            "VisionVault TV",
+            "Start TV Mode with HTTPS?\n\n"
+            "Yes = HTTPS (required for DeoVR, more secure)\n"
+            "No = HTTP (works with Quest Browser, Wolvic)\n"
+            "Cancel = abort"
+        )
+        
+        if choice is None:  # Cancel
+            return
+        
+        use_https = choice  # True = HTTPS, False = HTTP
+        
+        ok, msg = start_tv_mode(use_https=use_https)
         if ok:
             self.set_status(msg)
-            messagebox.showinfo(
-                "VisionVault TV",
-                f"{msg}\n\nOpen this on your TV:\n{get_tv_mode_url()}"
-            )
+            if use_https:
+                # Extract IP from message (or just show both)
+                from core.vault_core import get_local_ip
+                messagebox.showinfo(
+                    "VisionVault TV",
+                    f"{msg}\n\nOpen this on your VR browser:\nhttps://{get_local_ip()}:5051\n\nNote: Accept the certificate warning (self-signed)."
+                )
+            else:
+                messagebox.showinfo(
+                    "VisionVault TV",
+                    f"{msg}\n\nOpen this on your TV browser:\n{get_tv_mode_url()}"
+                )
         else:
             self.set_status(msg)
             messagebox.showerror("VisionVault TV", msg)
